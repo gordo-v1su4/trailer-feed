@@ -87,7 +87,25 @@ Runtime `/opt/trailer-feed/runtime.env` is root-owned, mode 0600.
 - `MEDIA_GATEWAY_TOKEN`: existing RustFS gateway credential, BWS
   `PROXMOX_HOME_HOSTINGER_MEDIA_GATEWAY_TOKEN` (existing local project mirror).
 - `TRAILER_FEED_OWNER_PASSWORD`: BWS `PROXMOX_HOME_SHARED_OPERATOR_APP_PASSWORD`.
-- `ALLOWED_ORIGINS`: exact Vercel origin and authorized local development origin.
+- `ALLOWED_ORIGINS`: `https://trailerfeed.video`, `https://www.trailerfeed.video`,
+  `https://trailer-feed.vercel.app`, and authorized local development origin
+  `http://127.0.0.1:5191`. Include both public-domain origins even while the
+  apex redirects to `www`; the catalog and owner routes require exact matches.
+
+On 2026-10-05 the public domain initially loaded the frontend but the catalog
+response omitted CORS headers because the runtime allowed only Vercel and
+local development. Both public origins were added to the existing root-owned
+runtime environment and only `trailer-feed-api` was recreated using its existing
+release image. The previous runtime environment is retained at
+`/opt/trailer-feed/runtime.env.before-public-domain-20261005-112239`.
+Public catalog GET and owner-login preflight now return the requesting public
+origin; an unrelated origin still receives no CORS permission. All 19 distinct
+catalog video URLs passed 1 KiB range requests (206), and all 20 distinct poster
+URLs passed HEAD requests (200), with anonymous storage CORS. Browser playback
+was not verified because Codex could not verify saved browser permissions.
+
+The build command runs `svelte-kit sync` before the comparison indexer so clean
+checkouts have `.svelte-kit/tsconfig.json` before Bun reads the root tsconfig.
 
 The shared storage credential is never exposed to the browser. Owner sessions
 expire after 24 hours and are stored as hashes in SQLite. Login is rate limited.

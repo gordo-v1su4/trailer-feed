@@ -6,7 +6,7 @@
   "scripts": {
     "build:posters": "bun scripts/build-video-posters.ts && bun run build:comparisons",
     "dev": "bun scripts/dev.ts",
-    "build": "bun run build:comparisons && vite build",
+    "build": "svelte-kit sync && bun run build:comparisons && vite build",
     "build:comparisons": "bun scripts/build-comparisons-index.ts",
     "preview": "vite preview",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
