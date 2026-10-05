@@ -1,3 +1,5 @@
+> Earlier roadmap retained for history. Raycast and generation tasks below are retired; current scope is README.md and STATUS.md.
+
 # Trailer Feed — TODO / Tomorrow Pickup
 
 Last updated: 2026-07-29 by Codex.

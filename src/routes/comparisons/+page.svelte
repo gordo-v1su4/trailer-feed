@@ -7,7 +7,6 @@
   import ClipCard from '$lib/components/ClipCard.svelte';
   import TakePlayer, { type CompareMode } from '$lib/components/TakePlayer.svelte';
   import GlassModal from '$lib/components/GlassModal.svelte';
-  import GenerateTake from '$lib/components/GenerateTake.svelte';
   import VersionDropzone from '$lib/components/VersionDropzone.svelte';
   import VersionDetails from '$lib/components/VersionDetails.svelte';
   import CopyButton from '$lib/components/CopyButton.svelte';
@@ -34,7 +33,6 @@
   let mode = $state<CompareMode>('watch');
   let drawer = $state<Drawer>('prompt');
   let importOpen = $state(false);
-  let generateOpen = $state(false);
   let shotUrl = $state<string | null>(null);
   let dropzone = $state<ReturnType<typeof VersionDropzone>>();
   let pendingFiles = $state<File[]>([]);
@@ -209,8 +207,8 @@
   {:else if !project}
     <div class="state-empty">
       <h1 class="t-page">No projects yet</h1>
-      <p class="muted">Pitch one from Create and its takes land here.</p>
-      <a class="sbtn sbtn-primary" href="/create"><Icon name="sparkles" /> New pitch</a>
+      <p class="muted">Import a finished video to start your portfolio.</p>
+      <a class="sbtn sbtn-primary" href="/create"><Icon name="sparkles" /> Import project</a>
     </div>
   {:else}
     {#if studio.projects.length > 1}
@@ -269,7 +267,6 @@
       </div>
       <div class="head-actions">
         <button type="button" class="sbtn" onclick={() => (importOpen = true)}><Icon name="upload" /> Import cut</button>
-        <button type="button" class="sbtn sbtn-primary" onclick={() => (generateOpen = true)}><Icon name="sparkles" /> Prepare Seedance take</button>
       </div>
     </header>
 
@@ -434,9 +431,6 @@
       {/if}
     </section>
 
-    {#key project.runId}
-      <GenerateTake run={project.detail} rows={project.detail.rows} open={generateOpen} onclose={() => (generateOpen = false)} ondecision={reload} onrefresh={reload} />
-    {/key}
 
     {#if importOpen}
       <GlassModal title="Import cut" fullTitle={`Import a cut into ${project.fullTitle}`} onclose={() => (importOpen = false)}>

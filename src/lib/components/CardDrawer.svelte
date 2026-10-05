@@ -2,8 +2,6 @@
   import Badge, { FAMILY_COLORS, EVIDENCE_COLORS, CONFIDENCE_COLORS } from './Badge.svelte';
   import CopyButton from './CopyButton.svelte';
   import type { PromptCardIndex } from '$lib/types/prompt-card';
-  import { callBridgeTool } from '$lib/bridge/types';
-  import type { GenerateCinematicGridInput, GenerateCinematicGridOutput } from '$lib/bridge/types';
 
   let {
     card,
@@ -15,40 +13,6 @@
     onclose?: () => void;
   } = $props();
 
-  let gridJob = $state<GenerateCinematicGridOutput | null>(null);
-  let gridError = $state('');
-  let gridLoading = $state(false);
-
-  const BRIDGE_URL = import.meta.env.VITE_RAYCAST_BRIDGE_URL ?? 'http://127.0.0.1:8787';
-  const BRIDGE_TOKEN = import.meta.env.VITE_RAYCAST_BRIDGE_TOKEN ?? '';
-
-  async function generateGrid() {
-    if (!card) return;
-    if (!BRIDGE_TOKEN) {
-      gridError = 'Bridge token is not configured for this local UI session.';
-      return;
-    }
-    gridLoading = true;
-    gridError = '';
-    gridJob = null;
-    try {
-      const input: GenerateCinematicGridInput = {
-        brief: `Create a ${card.model_family} cinematic image grid based on this prompt card:\nTitle: ${card.title}\nSummary: ${card.summary}\nBody: ${card.body_excerpt}`,
-        grid_layout: '3x3',
-        aspect_ratio: card.aspect_ratio,
-        resolution: '2k',
-      };
-      gridJob = await callBridgeTool<GenerateCinematicGridInput, GenerateCinematicGridOutput>(
-        { baseUrl: BRIDGE_URL, token: BRIDGE_TOKEN },
-        'generate_cinematic_grid',
-        input,
-      );
-    } catch (e) {
-      gridError = e instanceof Error ? e.message : String(e);
-    } finally {
-      gridLoading = false;
-    }
-  }
 </script>
 
 <aside class="dc-drawer" class:open={open}>
@@ -59,9 +23,6 @@
           <h2>{card.title}</h2>
           <div class="dc-drawer-actions">
             <a href="/comparisons?prompt={card.slug}" class="dc-drawer-link-badge">Compare →</a>
-            <button class="dc-drawer-button" onclick={generateGrid} disabled={gridLoading}>
-              {gridLoading ? 'Generating…' : 'Generate Grid'}
-            </button>
           </div>
         </div>
         <div class="dc-drawer-toolbar">
@@ -74,15 +35,6 @@
 
       <p class="dc-drawer-summary">{card.summary}</p>
 
-      {#if gridJob}
-        <div class="dc-drawer-panel">
-          <p>Grid job started: <code>{gridJob.job_id}</code></p>
-          <p>Status: {gridJob.status}</p>
-        </div>
-      {/if}
-      {#if gridError}
-        <p class="dc-drawer-error">{gridError}</p>
-      {/if}
 
       <div class="dc-drawer-badges">
         <Badge label={card.model_family} color={FAMILY_COLORS[card.model_family] ?? 'var(--dc-general)'} />
@@ -151,7 +103,6 @@
     .dc-drawer-heading h2 { font-size: 19px; }
 
     .dc-drawer-close,
-    .dc-drawer-button,
     .dc-drawer-link-badge {
       min-height: var(--dc-tap);
       font-size: 13px;
@@ -192,8 +143,7 @@
     margin-top: 10px;
   }
 
-  .dc-drawer-link-badge,
-  .dc-drawer-button {
+  .dc-drawer-link-badge {
     display: inline-flex;
     align-items: center;
     min-height: 28px;
@@ -207,8 +157,7 @@
     cursor: pointer;
   }
 
-  .dc-drawer-link-badge:hover,
-  .dc-drawer-button:hover:not(:disabled) {
+  .dc-drawer-link-badge:hover {
     background: rgba(255, 255, 255, 0.18);
   }
 
@@ -238,28 +187,9 @@
     line-height: 1.5;
   }
 
-  .dc-drawer-panel {
-    margin-bottom: 12px;
-    padding: 12px;
-    border: 0;
-    border-radius: 6px;
-    background: rgba(0, 0, 0, 0.3);
-    font-size: 13px;
-  }
 
-  .dc-drawer-panel p {
-    margin: 0 0 4px;
-  }
 
-  .dc-drawer-panel code {
-    font-family: var(--dc-font-mono);
-  }
 
-  .dc-drawer-error {
-    margin: 0 0 12px;
-    color: #f87171;
-    font-size: 12px;
-  }
 
   .dc-drawer-badges {
     display: flex;

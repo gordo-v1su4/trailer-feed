@@ -1,3 +1,5 @@
+> Historical only. Retired 2026-10-05. Trailer Feed is a portfolio and no longer connects to the Raycast bridge.
+
 ---
 name: raycast-concept-capture
 description: Capture a Trailer Feed comparison run through Raycast using computer use. Opens Raycast AI chat for Sora 2 - ChatGPT and Sora 2 - Haiku, pastes the canonical brief, copies each answer, and persists via trailer-feed-capture-answer.sh. Use when the user asks to capture a concept run, automate Raycast capture, or run computer use for Trailer Feed.

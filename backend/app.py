@@ -21,14 +21,10 @@ from robyn import Robyn, Request, Response
 DATA = Path(os.getenv('DATA_DIR', '/data'))
 DATA.mkdir(parents=True, exist_ok=True)
 DB = DATA / 'trailer-feed.sqlite'
-# Upgrade existing volumes without creating an empty catalog or losing sessions.
-if not DB.exists() and (DATA / 'directors-cut.sqlite').exists():
-    with sqlite3.connect(DATA / 'directors-cut.sqlite') as source, sqlite3.connect(DB) as target:
-        source.backup(target)
 GATEWAY = os.environ['MEDIA_GATEWAY_URL'].rstrip('/')
 TOKEN = os.environ['MEDIA_GATEWAY_TOKEN']
-PASSWORD = os.getenv('TRAILER_FEED_OWNER_PASSWORD') or os.environ['DIRECTORS_CUT_OWNER_PASSWORD']
-ORIGINS = set(os.getenv('ALLOWED_ORIGINS', 'https://trailer-feed.vercel.app,https://directors-cut-two.vercel.app,http://127.0.0.1:5191').split(','))
+PASSWORD = os.environ['TRAILER_FEED_OWNER_PASSWORD']
+ORIGINS = set(os.getenv('ALLOWED_ORIGINS', 'https://trailer-feed.vercel.app,http://127.0.0.1:5191').split(','))
 BUCKET = 'trailer-feed'
 lock = threading.RLock()
 app = Robyn(__file__)

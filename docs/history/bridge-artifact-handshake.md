@@ -1,3 +1,5 @@
+> Historical only. Retired 2026-10-05. Trailer Feed is a portfolio and no longer connects to the Raycast bridge.
+
 # Bridge Artifact Handshake
 
 > Single source of truth for how `raycast-pro-bridge` and `trailer-feed`

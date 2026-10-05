@@ -1,6 +1,5 @@
 <script lang="ts">
-  import { resolve } from '$app/paths';
-  import { seedanceCreateUrl, isLegacySora } from '$lib/create/models';
+  import { isLegacySora } from '$lib/create/models';
   import LegacyText from '$lib/components/LegacyText.svelte';
   import type { ComparisonArtifact, GenerationPrompt } from '$lib/types/comparison';
   import { mediaApi, ownerToken } from '$lib/data/media-api';
@@ -93,10 +92,6 @@
     </form></dialog>
   {/if}
     {#if isLegacySora(videoModel(artifact))}<p class="legacy-note"><LegacyText text={videoModel(artifact)} /> is unavailable. This take and its original prompt remain available as legacy material.</p>{/if}
-    {#if savedPrompt}<div class="reuse-actions">
-      <a class="sbtn" href={resolve(seedanceCreateUrl({ run: artifact.run_id, take: artifact.artifact_id }, 'seedance-2.5'))}>Adapt for Seedance 2.5</a>
-      <a class="sbtn" href={resolve(seedanceCreateUrl({ run: artifact.run_id, take: artifact.artifact_id }, 'seedance-2.0'))}>Adapt for Seedance 2.0</a>
-    </div>{/if}
     <div class="context-grid">
       <div><div class="heading"><h3>Prompt</h3>{#if savedPrompt}<CopyButton text={savedPrompt} label="Copy" />{/if}</div>
         {#if savedPrompt}<p class="prompt"><LegacyText text={savedPrompt} /></p>{:else}<p class="empty">No prompt saved for this version.</p>{/if}
@@ -108,7 +103,6 @@
 
 <style>
   .legacy-note { color:var(--dc-text-muted); font-size:12px; margin:0 0 12px; }
-  .reuse-actions { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:16px; }
   .version-details {min-width:0; color:var(--dc-text);}
   /* Every header row here is 28px tall with 12px below, so rows line up across columns. */
   .heading {height:28px;display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px;}

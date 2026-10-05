@@ -104,7 +104,7 @@
     <div class="studio-column state-empty">
       <h1 class="t-page">Nothing in the edit yet</h1>
       <p class="muted">Pitch a project and its renders will show up here.</p>
-      <a class="sbtn sbtn-primary" href="/create"><Icon name="sparkles" /> New pitch</a>
+      <a class="sbtn sbtn-primary" href="/create"><Icon name="sparkles" /> Import project</a>
     </div>
   {:else}
     <!-- Now playing: the video runs edge to edge, under the glass nav. -->
@@ -186,7 +186,7 @@
               <h2 id="latest-title" class="t-section">Latest renders</h2>
               <span class="dim row-note">Newest takes across every project</span>
             </div>
-            <a class="sbtn" href="/create"><Icon name="sparkles" /> New pitch</a>
+            <a class="sbtn" href="/create"><Icon name="sparkles" /> Import project</a>
           </div>
           <div class="grid-clips">
             {#each latest as take (take.id)}

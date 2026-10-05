@@ -30,8 +30,8 @@ export const NAV_LINKS: NavLink[] = [
   },
   {
     href: '/create',
-    label: 'Create',
-    hint: 'Pitch a new project',
+    label: 'Import',
+    hint: 'Import finished videos',
     match: (p) => p.startsWith('/create'),
   },
   {

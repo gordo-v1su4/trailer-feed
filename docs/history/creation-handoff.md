@@ -1,3 +1,5 @@
+> Historical only. Retired 2026-10-05. Trailer Feed is a portfolio and no longer connects to the Raycast bridge.
+
 # Trailer Feed — Raycast → Sora Vertical Slice Handoff
 
 **Updated:** 2026-08-14
