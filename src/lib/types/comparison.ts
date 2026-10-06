@@ -140,6 +140,11 @@ export interface GenerationPrompt {
 
 export interface ComparisonArtifact {
   artifact_id: string;
+  ownership?: 'server' | 'external';
+  source_app?: string;
+  source_asset_id?: string;
+  source_version_id?: string;
+  consent_generation?: number;
   version_number?: number;
   version_prompt?: string;
   video_model?: string;

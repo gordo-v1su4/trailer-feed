@@ -19,7 +19,7 @@ bun install
 bun run dev
 ```
 
-Open http://127.0.0.1:5191. The frontend uses the live catalog in development and production. Owner sign-in is required for importing or editing.
+Open http://127.0.0.1:5191. The frontend uses the live catalog in development and production. Owner sign-in is required for importing or editing. An externally owned Review Room version can be removed individually from its take details after exact-version confirmation; its original uploads stay in Review Room. Trailer Feed retains removal suppression, and restoration requires explicit Sync again consent in Review Room. Assigned target version numbers determine take order, even when an older source version is synced later.
 
 ```powershell
 bun run check

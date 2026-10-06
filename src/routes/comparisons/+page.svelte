@@ -9,6 +9,7 @@
   import GlassModal from '$lib/components/GlassModal.svelte';
   import VersionDropzone from '$lib/components/VersionDropzone.svelte';
   import VersionDetails from '$lib/components/VersionDetails.svelte';
+  import RemoveExternalVersion from '$lib/components/RemoveExternalVersion.svelte';
   import CopyButton from '$lib/components/CopyButton.svelte';
   import Icon from '$lib/components/Icon.svelte';
   import { studio, plural, type Take } from '$lib/ui/studio.svelte';
@@ -335,7 +336,7 @@
                 {#if take.model}<span class="stag tone-{toneFor(take.model)}"><LegacyText text={take.model} /></span>{/if}
               </div>
               {#if mediaApi}
-                <button type="button" class="sbtn" onclick={() => details?.edit()}><Icon name="edit" size={12} /> Edit version details</button>
+                <div class="take-owner-actions"><button type="button" class="sbtn" onclick={() => details?.edit()}><Icon name="edit" size={12} /> Edit version details</button><RemoveExternalVersion artifact={take.artifact} code={take.code} onRemoved={runId => studio.reload(runId)}/></div>
               {/if}
             </div>
             {#key take.id}
@@ -466,6 +467,7 @@
 </div>
 
 <style>
+  .take-owner-actions {display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
   .projects {
     display: grid;
     grid-template-columns: minmax(0, 1fr);

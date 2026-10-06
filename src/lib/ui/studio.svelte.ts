@@ -107,6 +107,9 @@ function buildProject(summary: ComparisonRunSummary, detail: ComparisonRunDetail
     };
   });
 
+  // Target numbering is authoritative even when a later sync uses an older source date.
+  takes.sort((a,b) => a.number - b.number || a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
+
   return {
     runId: summary.run_id,
     projectThumbnailUrl: detail.project_thumbnail_url,
