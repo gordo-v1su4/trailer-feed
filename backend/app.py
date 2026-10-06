@@ -506,6 +506,9 @@ def register_external_version(request: Request):
             raise ValueError()
         identity = external_identity(payload)
         asset_id, version_id = identity['source_asset_id'], identity['source_version_id']
+        asset_code = payload.get('source_asset_code', asset_id)
+        if not isinstance(asset_code, str) or not asset_code.strip() or len(asset_code) > 200:
+            raise ValueError()
         media_url = payload['media_url']
         slug = review_resolver_url(media_url, version_id)
         poster_url = payload.get('poster_url')
@@ -549,6 +552,7 @@ def register_external_version(request: Request):
         artifact = {'artifact_id': artifact_id, 'run_id': run_id, 'title': metadata['sourceLabel'] or f'Review version {number}', 'created_at': identity['source_created_at'], 'provider': 'unknown', 'source': 'manual', 'artifact_type': 'video_result', 'status': 'generated', 'ownership': 'external', 'source_app': 'review-room', 'source_asset_id': asset_id, 'source_version_id': version_id, 'consent_generation': identity['consent_generation'], 'version_number': number, 'media_url': media_url, 'video_model': metadata['model'], 'version_prompt': metadata['prompt'], 'notes': metadata['notes'], 'creative_metadata': metadata, 'reference_image_ids': []}
         if poster_url is not None:
             artifact['thumbnail_url'] = poster_url
+        artifact['source_asset_code'] = asset_code
         for image in attachments:
             image_artifact_id = 'review-image-' + hashlib.sha256(json.dumps([asset_id, version_id, image['source_version_id'], image['artifact_type']]).encode()).hexdigest()[:32]
             attachment = {**image, 'artifact_id': image_artifact_id, 'run_id': run_id, 'title': 'Review image', 'created_at': identity['source_created_at'], 'provider': 'unknown', 'source': 'manual', 'status': 'generated', 'ownership': 'external', 'source_app': 'review-room', 'source_parent_artifact_id': artifact_id}

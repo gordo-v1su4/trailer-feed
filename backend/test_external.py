@@ -23,7 +23,7 @@ class ExternalVersionTests(unittest.TestCase):
         with app.connect() as db:
             db.execute('INSERT INTO documents VALUES (?,?,?)', (self.run_id, 'run', json.dumps({'run_id': self.run_id, 'title': 'External verification', 'status': 'draft'})))
             db.execute('INSERT INTO documents VALUES (?,?,?)', (self.run_id, 'artifacts', '[]'))
-        self.payload = {'run_id': self.run_id, 'batch_id': 'single-' + self.run_id, 'source_asset_id': 'asset-' + self.run_id, 'source_version_id': 'version-1', 'source_created_at': '2026-10-01T10:00:00+00:00', 'media_url': 'https://review.v1su4.dev/api/destination-media/selected-grant/version-1/original', 'metadata': {'model': 'Sora 2', 'prompt': 'Selected original take'}}
+        self.payload = {'run_id': self.run_id, 'batch_id': 'single-' + self.run_id, 'source_asset_id': 'asset-' + self.run_id, 'source_version_id': 'version-1', 'source_asset_code': 'VID_20261005_00007', 'source_created_at': '2026-10-01T10:00:00+00:00', 'media_url': 'https://review.v1su4.dev/api/destination-media/selected-grant/version-1/original', 'metadata': {'model': 'Sora 2', 'prompt': 'Selected original take'}}
 
     def ingest(self, payload=None, token='test-ingest-only'):
         return app.register_external_version(Mock(body=json.dumps(payload or self.payload), headers={'authorization': 'Bearer ' + token}, path_params={}))
@@ -218,6 +218,7 @@ class ExternalVersionTests(unittest.TestCase):
         first = self.ingest()
         self.assertEqual(first.status_code, 201)
         artifact = json.loads(first.description)['artifact']
+        self.assertEqual(artifact['source_asset_code'], 'VID_20261005_00007')
         self.assertEqual(artifact['version_number'], 1)
         self.assertEqual(artifact['media_url'], self.payload['media_url'])
         self.assertEqual(artifact['ownership'], 'external')
