@@ -54,6 +54,7 @@ def initialize():
         CREATE TABLE IF NOT EXISTS deleted_runs (run_id TEXT PRIMARY KEY, deleted_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS external_versions (source_app TEXT NOT NULL, source_asset_id TEXT NOT NULL, source_version_id TEXT NOT NULL, run_id TEXT NOT NULL, artifact_id TEXT NOT NULL UNIQUE, version INTEGER NOT NULL, PRIMARY KEY(source_app,source_asset_id,source_version_id), UNIQUE(run_id,version));
         CREATE TABLE IF NOT EXISTS external_batches (batch_id TEXT PRIMARY KEY, run_id TEXT NOT NULL, selection TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS external_connections (source_project_id TEXT NOT NULL, source_folder_id TEXT NOT NULL, run_id TEXT NOT NULL, PRIMARY KEY(source_project_id,source_folder_id));
         PRAGMA user_version=2;
         ''')
         if 'state' not in {row['name'] for row in db.execute('PRAGMA table_info(external_versions)')}:
@@ -214,6 +215,59 @@ def external_identity(payload):
     if created_at.tzinfo is None:
         raise ValueError()
     return {'source_asset_id': asset_id, 'source_version_id': version_id, 'source_created_at': created_at.astimezone(timezone.utc).isoformat()}
+
+
+@app.post('/external/review/connections')
+def connect_review_project(request: Request):
+    denied = review_ingest_error(request)
+    if denied is not None:
+        return denied
+    try:
+        if len(request.body) > 4096:
+            raise ValueError()
+        payload = json.loads(request.body)
+        project_id, folder_id = payload['source_project_id'], payload.get('source_folder_id')
+        if folder_id is None:
+            folder_id = '__root__'
+        if any(not isinstance(value, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', value) for value in (project_id, folder_id)):
+            raise ValueError()
+        mode = payload['mode']
+        if mode == 'create':
+            title = payload['title']
+            if not isinstance(title, str) or not 1 <= len(title.strip()) <= 120:
+                raise ValueError()
+            target_id = 'review-' + hashlib.sha256(json.dumps([project_id, folder_id]).encode()).hexdigest()[:32]
+        elif mode == 'connect':
+            target_id = payload['run_id']
+            if not isinstance(target_id, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', target_id):
+                raise ValueError()
+        else:
+            raise ValueError()
+    except (ValueError, KeyError, TypeError, AttributeError):
+        return reply(request, {'error': 'Confirm creating or connecting a target project'}, 400)
+    with lock, connect() as db:
+        db.execute('BEGIN IMMEDIATE')
+        existing = db.execute('SELECT * FROM external_connections WHERE source_project_id=? AND source_folder_id=?', (project_id, folder_id)).fetchone()
+        if existing:
+            if mode == 'connect' and existing['run_id'] != target_id:
+                return reply(request, {'error': 'Source folder already has another target connection'}, 409)
+            if not document(db, existing['run_id'], 'run'):
+                return reply(request, {'error': 'Connected target was removed; explicit reactivation required'}, 409)
+            return reply(request, dict(existing))
+        if mode == 'create':
+            if db.execute('SELECT 1 FROM deleted_runs WHERE run_id=?', (target_id,)).fetchone():
+                return reply(request, {'error': 'Removed target cannot be recreated by a connection retry'}, 409)
+            duplicate = project_with_title(db, title.strip())
+            if duplicate:
+                return reply(request, {'error': 'Choose the existing project or a different name', 'existing_run_id': duplicate}, 409)
+            now = datetime.now(timezone.utc).isoformat()
+            run = {'run_id': target_id, 'title': title.strip(), 'logline': '', 'tags': [], 'format': '', 'status': 'draft', 'created': now, 'created_by': 'review-room', 'question': '', 'models_requested': [], 'target_models': [], 'source_refs': []}
+            for kind, value in [('run', run), ('answers', []), ('artifacts', []), ('prompts', []), ('decisions', [])]:
+                db.execute('INSERT INTO documents VALUES (?,?,?)', (target_id, kind, json.dumps(value)))
+        elif not document(db, target_id, 'run'):
+            return reply(request, {'error': 'Selected target project not found'}, 404)
+        db.execute('INSERT INTO external_connections VALUES (?,?,?)', (project_id, folder_id, target_id))
+    return reply(request, {'source_project_id': project_id, 'source_folder_id': folder_id, 'run_id': target_id}, 201)
 
 
 def review_resolver_url(value, version_id, variant='original'):

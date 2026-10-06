@@ -32,6 +32,34 @@ class ExternalVersionTests(unittest.TestCase):
         payload = {'run_id': self.run_id, 'batch_id': batch_id, 'versions': versions}
         return app.reserve_external_batch(Mock(body=json.dumps(payload), headers={'authorization': 'Bearer test-ingest-only'}, path_params={}))
 
+    def connect(self, payload):
+        return app.connect_review_project(Mock(body=json.dumps(payload), headers={'authorization': 'Bearer test-ingest-only'}, path_params={}))
+
+    def test_folder_connection_persists_ids_across_renames_and_requires_explicit_name_collision_choice(self):
+        identity = {'source_project_id': 'review-project-' + self.run_id, 'source_folder_id': 'folder-1'}
+        title = 'Connected project ' + self.run_id
+        first = self.connect({**identity, 'mode': 'create', 'title': title})
+        self.assertEqual(first.status_code, 201)
+        run_id = json.loads(first.description)['run_id']
+        with app.connect() as db:
+            run = app.document(db, run_id, 'run')
+            self.assertIn('created', run)
+            self.assertEqual(run['question'], '')
+            run['title'] = 'Renamed target ' + self.run_id
+            db.execute("UPDATE documents SET value=? WHERE run_id=? AND kind='run'", (json.dumps(run), run_id))
+        app.initialize()
+        repeated = self.connect({**identity, 'mode': 'create', 'title': 'Renamed source folder'})
+        self.assertEqual(repeated.status_code, 200)
+        self.assertEqual(json.loads(repeated.description)['run_id'], run_id)
+        other = {**identity, 'source_folder_id': 'folder-2'}
+        collision = self.connect({**other, 'mode': 'create', 'title': 'Renamed target ' + self.run_id})
+        self.assertEqual(collision.status_code, 409)
+        self.assertEqual(json.loads(collision.description)['existing_run_id'], run_id)
+        selected = self.connect({**other, 'mode': 'connect', 'run_id': run_id})
+        self.assertEqual(selected.status_code, 201)
+        self.assertEqual(json.loads(selected.description)['run_id'], run_id)
+        self.assertEqual(self.connect({**identity, 'mode': 'connect', 'run_id': self.run_id}).status_code, 409)
+
     def test_reservation_keeps_oldest_first_when_later_delivery_succeeds_before_retry(self):
         oldest = {key: self.payload[key] for key in ('source_asset_id', 'source_version_id', 'source_created_at')}
         newer = {**oldest, 'source_version_id': 'version-2', 'source_created_at': '2026-10-02T10:00:00+00:00'}
