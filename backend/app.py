@@ -5,6 +5,7 @@ import binascii
 import hashlib
 import hmac
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -52,8 +53,11 @@ def initialize():
         CREATE TABLE IF NOT EXISTS login_attempts (ip TEXT PRIMARY KEY, count INTEGER, until REAL);
         CREATE TABLE IF NOT EXISTS deleted_runs (run_id TEXT PRIMARY KEY, deleted_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS external_versions (source_app TEXT NOT NULL, source_asset_id TEXT NOT NULL, source_version_id TEXT NOT NULL, run_id TEXT NOT NULL, artifact_id TEXT NOT NULL UNIQUE, version INTEGER NOT NULL, PRIMARY KEY(source_app,source_asset_id,source_version_id), UNIQUE(run_id,version));
-        PRAGMA user_version=1;
+        CREATE TABLE IF NOT EXISTS external_batches (batch_id TEXT PRIMARY KEY, run_id TEXT NOT NULL, selection TEXT NOT NULL);
+        PRAGMA user_version=2;
         ''')
+        if 'state' not in {row['name'] for row in db.execute('PRAGMA table_info(external_versions)')}:
+            db.execute("ALTER TABLE external_versions ADD COLUMN state TEXT NOT NULL DEFAULT 'registered'")
         seed = Path(os.getenv('SEED_DIR', '/app/seed'))
         for folder in seed.glob('*'):
             if not folder.is_dir():
@@ -192,58 +196,198 @@ def get_document(request: Request):
     return reply(request, value, 200 if value is not None else 404)
 
 
-@app.post('/external/review/versions')
-def register_external_version(request: Request):
-    """Register a selected Review version; the issuer key never enters catalog JSON."""
+def review_ingest_error(request):
     key = os.getenv('TRAILER_FEED_REVIEW_INGEST_KEY', '')
     authorization = request.headers.get('authorization') or ''
     if not key:
         return reply(request, {'error': 'Review ingestion is not configured'}, 503)
     if request.headers.get('origin') or not hmac.compare_digest(authorization.encode(), ('Bearer ' + key).encode()):
         return reply(request, {'error': 'Review issuer authorization required'}, 401)
+    return None
+
+
+def external_identity(payload):
+    asset_id, version_id = (payload[field] for field in ('source_asset_id', 'source_version_id'))
+    if any(not isinstance(value, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', value) for value in (asset_id, version_id)):
+        raise ValueError()
+    created_at = datetime.fromisoformat(payload['source_created_at'])
+    if created_at.tzinfo is None:
+        raise ValueError()
+    return {'source_asset_id': asset_id, 'source_version_id': version_id, 'source_created_at': created_at.astimezone(timezone.utc).isoformat()}
+
+
+def review_resolver_url(value, version_id, variant='original'):
+    parsed = urlsplit(value)
+    match = re.fullmatch(r'/api/destination-media/([A-Za-z0-9_-]+)/' + re.escape(version_id) + '/' + variant, parsed.path)
+    if parsed.scheme != 'https' or parsed.netloc != 'review.v1su4.dev' or parsed.fragment or parsed.query not in ('', 'cors=1') or not match:
+        raise ValueError()
+    return match[1]
+
+
+def external_creative_metadata(metadata):
+    limits = {'model': 200, 'prompt': 20000, 'sourceLabel': 500, 'notes': 20000, 'releaseDate': 10}
+    result = {}
+    for name, limit in limits.items():
+        value = metadata.get(name, '')
+        if not isinstance(value, str) or len(value) > limit:
+            raise ValueError()
+        result[name] = value
+    if result['releaseDate'] and datetime.strptime(result['releaseDate'], '%Y-%m-%d').date().isoformat() != result['releaseDate']:
+        raise ValueError()
+    platforms = metadata.get('releasePlatforms', [])
+    if not isinstance(platforms, list) or len(platforms) > 20 or any(not isinstance(value, str) or len(value) > 100 for value in platforms):
+        raise ValueError()
+    fields = metadata.get('customFields', [])
+    if not isinstance(fields, list) or len(fields) > 30:
+        raise ValueError()
+    custom = []
+    for field in fields:
+        field_id, label, kind, value = (field[name] for name in ('id', 'label', 'kind', 'value'))
+        if not isinstance(field_id, str) or not 1 <= len(field_id.strip()) <= 100 or not isinstance(label, str) or not 1 <= len(label.strip()) <= 200:
+            raise ValueError()
+        if kind in ('text', 'date'):
+            if not isinstance(value, str) or len(value) > 20000:
+                raise ValueError()
+            if kind == 'date' and value and datetime.strptime(value, '%Y-%m-%d').date().isoformat() != value:
+                raise ValueError()
+        elif kind == 'number':
+            if value is not None and (isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value)):
+                raise ValueError()
+        elif kind == 'boolean':
+            if value is not None and not isinstance(value, bool):
+                raise ValueError()
+        else:
+            raise ValueError()
+        custom.append({'id': field_id.strip(), 'label': label, 'kind': kind, 'value': value})
+    if len({field['id'] for field in custom}) != len(custom):
+        raise ValueError()
+    result.update(releasePlatforms=platforms, customFields=custom)
+    source_created_at = metadata.get('sourceCreatedAt')
+    if source_created_at is not None:
+        if isinstance(source_created_at, bool) or not isinstance(source_created_at, int) or not 0 <= source_created_at <= 8640000000000000:
+            raise ValueError()
+        result['sourceCreatedAt'] = source_created_at
+    return result
+
+
+@app.post('/external/review/batches')
+def reserve_external_batch(request: Request):
+    denied = review_ingest_error(request)
+    if denied is not None:
+        return denied
     try:
         if len(request.body) > 150000:
             raise ValueError()
         payload = json.loads(request.body)
-        run_id, asset_id, version_id = (payload[field] for field in ('run_id', 'source_asset_id', 'source_version_id'))
-        if any(not isinstance(value, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', value) for value in (run_id, asset_id, version_id)):
+        run_id, batch_id = payload['run_id'], payload['batch_id']
+        if any(not isinstance(value, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', value) for value in (run_id, batch_id)) or not isinstance(payload['versions'], list) or not 1 <= len(payload['versions']) <= 100:
             raise ValueError()
-        media_url = payload['media_url']
-        created_at = datetime.fromisoformat(payload['source_created_at'])
-        if created_at.tzinfo is None:
+        versions = sorted([external_identity(item) for item in payload['versions']], key=lambda item: (item['source_created_at'], item['source_version_id'], item['source_asset_id']))
+        if len({(item['source_asset_id'], item['source_version_id']) for item in versions}) != len(versions):
             raise ValueError()
-        parsed = urlsplit(media_url)
-        if parsed.scheme != 'https' or parsed.netloc != 'review.v1su4.dev' or parsed.fragment or parsed.query not in ('', 'cors=1') or not re.fullmatch(r'/api/destination-media/[A-Za-z0-9_-]+/' + re.escape(version_id) + r'/original', parsed.path):
-            raise ValueError()
-        metadata = payload.get('metadata', {})
-        prompt, model = metadata.get('prompt', ''), metadata.get('model', '')
-        if not isinstance(prompt, str) or len(prompt) > 100000 or not isinstance(model, str) or len(model) > 100:
-            raise ValueError()
+        selection = json.dumps(versions, sort_keys=True)
     except (ValueError, KeyError, TypeError, AttributeError):
+        return reply(request, {'error': 'Provide an immutable ordered source batch'}, 400)
+    with lock, connect() as db:
+        db.execute('BEGIN IMMEDIATE')
+        batch = db.execute('SELECT * FROM external_batches WHERE batch_id=?', (batch_id,)).fetchone()
+        if batch and (batch['run_id'] != run_id or batch['selection'] != selection):
+            return reply(request, {'error': 'Batch identity already has different consent'}, 409)
+        if not document(db, run_id, 'run'):
+            return reply(request, {'error': 'Connected project not found'}, 404)
+        existing = [db.execute("SELECT * FROM external_versions WHERE source_app='review-room' AND source_asset_id=? AND source_version_id=?", (item['source_asset_id'], item['source_version_id'])).fetchone() for item in versions]
+        if any(row and row['run_id'] != run_id for row in existing):
+            return reply(request, {'error': 'Source version is already connected to another project'}, 409)
+        if any(row and row['state'] not in ('reserved', 'registered') for row in existing):
+            return reply(request, {'error': 'Source version requires explicit reactivation'}, 409)
+        videos = [item for item in (document(db, run_id, 'artifacts') or []) if item.get('artifact_type') in ('video_result', 'end_video', 'video')]
+        highest = max([int(item.get('version_number', index + 1)) for index, item in enumerate(videos)] + [0])
+        uploaded = db.execute('SELECT max(version) FROM uploads WHERE run_id=?', (run_id,)).fetchone()[0] or 0
+        external = db.execute('SELECT max(version) FROM external_versions WHERE run_id=?', (run_id,)).fetchone()[0] or 0
+        number = max(highest, uploaded, external)
+        allocated = []
+        for item, row in zip(versions, existing):
+            if not row:
+                number += 1
+                artifact_id = 'review-' + hashlib.sha256(json.dumps(['review-room', item['source_asset_id'], item['source_version_id']]).encode()).hexdigest()[:32]
+                db.execute('INSERT INTO external_versions VALUES (?,?,?,?,?,?,?)', ('review-room', item['source_asset_id'], item['source_version_id'], run_id, artifact_id, number, 'reserved'))
+                row = {'version': number, 'artifact_id': artifact_id, 'state': 'reserved'}
+            allocated.append({**item, 'version_number': row['version'], 'artifact_id': row['artifact_id'], 'state': row['state']})
+        db.execute('INSERT OR IGNORE INTO external_batches VALUES (?,?,?)', (batch_id, run_id, selection))
+    return reply(request, {'batch_id': batch_id, 'versions': allocated}, 200 if batch else 201)
+
+
+@app.post('/external/review/versions')
+def register_external_version(request: Request):
+    """Register a selected Review version; the issuer key never enters catalog JSON."""
+    denied = review_ingest_error(request)
+    if denied is not None:
+        return denied
+    try:
+        if len(request.body) > 2000000:
+            raise ValueError()
+        payload = json.loads(request.body)
+        run_id, batch_id = payload['run_id'], payload['batch_id']
+        if any(not isinstance(value, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', value) for value in (run_id, batch_id)):
+            raise ValueError()
+        identity = external_identity(payload)
+        asset_id, version_id = identity['source_asset_id'], identity['source_version_id']
+        media_url = payload['media_url']
+        slug = review_resolver_url(media_url, version_id)
+        poster_url = payload.get('poster_url')
+        if poster_url is not None and review_resolver_url(poster_url, version_id, 'poster') != slug:
+            raise ValueError()
+        metadata = external_creative_metadata(payload.get('metadata', {}))
+        references = payload.get('references', [])
+        grid = payload.get('grid')
+        if not isinstance(references, list) or len(references) > 20:
+            raise ValueError()
+        attachments = []
+        for image, artifact_type in ([ (grid, 'shot_grid') ] if grid is not None else []) + [(image, 'image_result') for image in references]:
+            image_id = image['source_version_id']
+            if not isinstance(image_id, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', image_id) or review_resolver_url(image['media_url'], image_id) != slug:
+                raise ValueError()
+            attachments.append({'source_version_id': image_id, 'media_url': image['media_url'], 'artifact_type': artifact_type})
+    except (ValueError, KeyError, TypeError, AttributeError, OverflowError):
         return reply(request, {'error': 'Provide an exact Review source version and controlled resolver URL'}, 400)
     with lock, connect() as db:
         db.execute('BEGIN IMMEDIATE')
+        batch = db.execute('SELECT * FROM external_batches WHERE batch_id=?', (batch_id,)).fetchone()
+        if not batch or batch['run_id'] != run_id or identity not in json.loads(batch['selection']):
+            return reply(request, {'error': 'Version is not in this reserved consent batch'}, 409)
         existing = db.execute("SELECT * FROM external_versions WHERE source_app='review-room' AND source_asset_id=? AND source_version_id=?", (asset_id, version_id)).fetchone()
         if existing:
             if existing['run_id'] != run_id:
                 return reply(request, {'error': 'Source version is already connected to another project'}, 409)
             artifact = next((item for item in (document(db, run_id, 'artifacts') or []) if item['artifact_id'] == existing['artifact_id']), None)
-            if not artifact:
+            if existing['state'] not in ('reserved', 'registered') or (existing['state'] == 'registered' and not artifact):
                 return reply(request, {'error': 'Source version is disconnected; explicit reactivation required'}, 409)
-            return reply(request, {'artifact': artifact, 'existing': True})
+            if existing['state'] == 'registered':
+                return reply(request, {'artifact': artifact, 'existing': True})
+        else:
+            return reply(request, {'error': 'Version reservation unavailable'}, 409)
         if not document(db, run_id, 'run'):
             return reply(request, {'error': 'Connected project not found'}, 404)
         artifacts = document(db, run_id, 'artifacts') or []
-        videos = [item for item in artifacts if item.get('artifact_type') in ('video_result', 'end_video', 'video')]
-        highest = max([int(item.get('version_number', index + 1)) for index, item in enumerate(videos)] + [0])
-        uploaded = db.execute('SELECT max(version) FROM uploads WHERE run_id=?', (run_id,)).fetchone()[0] or 0
-        external = db.execute('SELECT max(version) FROM external_versions WHERE run_id=?', (run_id,)).fetchone()[0] or 0
-        number = max(highest, uploaded, external) + 1
-        artifact_id = 'review-' + hashlib.sha256(json.dumps(['review-room', asset_id, version_id]).encode()).hexdigest()[:32]
-        artifact = {'artifact_id': artifact_id, 'run_id': run_id, 'title': f'Review version {number}', 'created_at': created_at.astimezone(timezone.utc).isoformat(), 'provider': 'unknown', 'source': 'manual', 'artifact_type': 'video_result', 'status': 'generated', 'ownership': 'external', 'source_app': 'review-room', 'source_asset_id': asset_id, 'source_version_id': version_id, 'version_number': number, 'media_url': media_url, 'video_model': model, 'version_prompt': prompt}
-        db.execute('INSERT INTO external_versions VALUES (?,?,?,?,?,?)', ('review-room', asset_id, version_id, run_id, artifact_id, number))
+        number, artifact_id = existing['version'], existing['artifact_id']
+        artifact = {'artifact_id': artifact_id, 'run_id': run_id, 'title': metadata['sourceLabel'] or f'Review version {number}', 'created_at': identity['source_created_at'], 'provider': 'unknown', 'source': 'manual', 'artifact_type': 'video_result', 'status': 'generated', 'ownership': 'external', 'source_app': 'review-room', 'source_asset_id': asset_id, 'source_version_id': version_id, 'version_number': number, 'media_url': media_url, 'video_model': metadata['model'], 'version_prompt': metadata['prompt'], 'notes': metadata['notes'], 'creative_metadata': metadata, 'reference_image_ids': []}
+        if poster_url is not None:
+            artifact['thumbnail_url'] = poster_url
+        for image in attachments:
+            image_artifact_id = 'review-image-' + hashlib.sha256(json.dumps([asset_id, version_id, image['source_version_id'], image['artifact_type']]).encode()).hexdigest()[:32]
+            attachment = {**image, 'artifact_id': image_artifact_id, 'run_id': run_id, 'title': 'Review image', 'created_at': identity['source_created_at'], 'provider': 'unknown', 'source': 'manual', 'status': 'generated', 'ownership': 'external', 'source_app': 'review-room', 'source_parent_artifact_id': artifact_id}
+            artifacts.append(attachment)
+            if image['artifact_type'] == 'shot_grid':
+                artifact.update(shot_grid_url=image['media_url'], shot_grid_artifact_id=image_artifact_id)
+            else:
+                artifact['reference_image_ids'].append(image_artifact_id)
+        db.execute("UPDATE external_versions SET state='registered' WHERE source_app='review-room' AND source_asset_id=? AND source_version_id=?", (asset_id, version_id))
         artifacts.append(artifact)
         db.execute('INSERT OR REPLACE INTO documents VALUES (?,?,?)', (run_id, 'artifacts', json.dumps(artifacts)))
+        run = document(db, run_id, 'run')
+        if run.get('status') == 'draft':
+            run['status'] = 'ready_for_review'
+            db.execute("UPDATE documents SET value=? WHERE run_id=? AND kind='run'", (json.dumps(run), run_id))
     return reply(request, {'artifact': artifact, 'existing': False}, 201)
 
 
@@ -276,7 +420,8 @@ def upload(request: Request):
         videos = [a for a in artifacts if a.get('artifact_type') in ('video_result','video')]
         highest = max([int(a.get('version_number',i+1)) for i,a in enumerate(videos)]+[0])
         queued = db.execute('SELECT max(version) FROM uploads WHERE run_id=?',(run_id,)).fetchone()[0] or 0
-        version = max(highest,queued)+1
+        external = db.execute('SELECT max(version) FROM external_versions WHERE run_id=?',(run_id,)).fetchone()[0] or 0
+        version = max(highest,queued,external)+1
         uid = secrets.token_hex(16)
         now = datetime.now(timezone.utc)
         key = f'media-uploads/{now:%Y/%m_%d}/{run_id}/versions/v{version}/{sha}{extension}'
