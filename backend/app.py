@@ -51,6 +51,7 @@ def initialize():
         CREATE TABLE IF NOT EXISTS sessions (digest TEXT PRIMARY KEY, expires REAL NOT NULL);
         CREATE TABLE IF NOT EXISTS login_attempts (ip TEXT PRIMARY KEY, count INTEGER, until REAL);
         CREATE TABLE IF NOT EXISTS deleted_runs (run_id TEXT PRIMARY KEY, deleted_at TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS external_versions (source_app TEXT NOT NULL, source_asset_id TEXT NOT NULL, source_version_id TEXT NOT NULL, run_id TEXT NOT NULL, artifact_id TEXT NOT NULL UNIQUE, version INTEGER NOT NULL, PRIMARY KEY(source_app,source_asset_id,source_version_id), UNIQUE(run_id,version));
         PRAGMA user_version=1;
         ''')
         seed = Path(os.getenv('SEED_DIR', '/app/seed'))
@@ -189,6 +190,61 @@ def get_document(request: Request):
     with connect() as db:
         value = document(db, request.path_params['run_id'], kind)
     return reply(request, value, 200 if value is not None else 404)
+
+
+@app.post('/external/review/versions')
+def register_external_version(request: Request):
+    """Register a selected Review version; the issuer key never enters catalog JSON."""
+    key = os.getenv('TRAILER_FEED_REVIEW_INGEST_KEY', '')
+    authorization = request.headers.get('authorization') or ''
+    if not key:
+        return reply(request, {'error': 'Review ingestion is not configured'}, 503)
+    if request.headers.get('origin') or not hmac.compare_digest(authorization.encode(), ('Bearer ' + key).encode()):
+        return reply(request, {'error': 'Review issuer authorization required'}, 401)
+    try:
+        if len(request.body) > 150000:
+            raise ValueError()
+        payload = json.loads(request.body)
+        run_id, asset_id, version_id = (payload[field] for field in ('run_id', 'source_asset_id', 'source_version_id'))
+        if any(not isinstance(value, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', value) for value in (run_id, asset_id, version_id)):
+            raise ValueError()
+        media_url = payload['media_url']
+        created_at = datetime.fromisoformat(payload['source_created_at'])
+        if created_at.tzinfo is None:
+            raise ValueError()
+        parsed = urlsplit(media_url)
+        if parsed.scheme != 'https' or parsed.netloc != 'review.v1su4.dev' or parsed.fragment or parsed.query not in ('', 'cors=1') or not re.fullmatch(r'/api/destination-media/[A-Za-z0-9_-]+/' + re.escape(version_id) + r'/original', parsed.path):
+            raise ValueError()
+        metadata = payload.get('metadata', {})
+        prompt, model = metadata.get('prompt', ''), metadata.get('model', '')
+        if not isinstance(prompt, str) or len(prompt) > 100000 or not isinstance(model, str) or len(model) > 100:
+            raise ValueError()
+    except (ValueError, KeyError, TypeError, AttributeError):
+        return reply(request, {'error': 'Provide an exact Review source version and controlled resolver URL'}, 400)
+    with lock, connect() as db:
+        db.execute('BEGIN IMMEDIATE')
+        existing = db.execute("SELECT * FROM external_versions WHERE source_app='review-room' AND source_asset_id=? AND source_version_id=?", (asset_id, version_id)).fetchone()
+        if existing:
+            if existing['run_id'] != run_id:
+                return reply(request, {'error': 'Source version is already connected to another project'}, 409)
+            artifact = next((item for item in (document(db, run_id, 'artifacts') or []) if item['artifact_id'] == existing['artifact_id']), None)
+            if not artifact:
+                return reply(request, {'error': 'Source version is disconnected; explicit reactivation required'}, 409)
+            return reply(request, {'artifact': artifact, 'existing': True})
+        if not document(db, run_id, 'run'):
+            return reply(request, {'error': 'Connected project not found'}, 404)
+        artifacts = document(db, run_id, 'artifacts') or []
+        videos = [item for item in artifacts if item.get('artifact_type') in ('video_result', 'end_video', 'video')]
+        highest = max([int(item.get('version_number', index + 1)) for index, item in enumerate(videos)] + [0])
+        uploaded = db.execute('SELECT max(version) FROM uploads WHERE run_id=?', (run_id,)).fetchone()[0] or 0
+        external = db.execute('SELECT max(version) FROM external_versions WHERE run_id=?', (run_id,)).fetchone()[0] or 0
+        number = max(highest, uploaded, external) + 1
+        artifact_id = 'review-' + hashlib.sha256(json.dumps(['review-room', asset_id, version_id]).encode()).hexdigest()[:32]
+        artifact = {'artifact_id': artifact_id, 'run_id': run_id, 'title': f'Review version {number}', 'created_at': created_at.astimezone(timezone.utc).isoformat(), 'provider': 'unknown', 'source': 'manual', 'artifact_type': 'video_result', 'status': 'generated', 'ownership': 'external', 'source_app': 'review-room', 'source_asset_id': asset_id, 'source_version_id': version_id, 'version_number': number, 'media_url': media_url, 'video_model': model, 'version_prompt': prompt}
+        db.execute('INSERT INTO external_versions VALUES (?,?,?,?,?,?)', ('review-room', asset_id, version_id, run_id, artifact_id, number))
+        artifacts.append(artifact)
+        db.execute('INSERT OR REPLACE INTO documents VALUES (?,?,?)', (run_id, 'artifacts', json.dumps(artifacts)))
+    return reply(request, {'artifact': artifact, 'existing': False}, 201)
 
 
 @app.post('/versions')
