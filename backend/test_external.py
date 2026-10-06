@@ -237,6 +237,55 @@ class ExternalVersionTests(unittest.TestCase):
         self.assertEqual(len(values),1)
         self.assertNotIn('shot_grid_url',values[0])
 
+    def test_explicit_metadata_refresh_fills_empty_fields_and_preserves_target_values_and_order(self):
+        self.assertEqual(self.reserve([self.payload],self.payload['batch_id']).status_code,201)
+        original = {**self.payload,'metadata':{'model':'Target model','prompt':'','notes':'Keep notes','customFields':[{'id':'flag','label':'Flag','kind':'boolean','value':False},{'id':'zero','label':'Zero','kind':'number','value':0}]}}
+        artifact = json.loads(self.ingest(original).description)['artifact']
+        grid = {'source_version_id':'refresh-grid-' + self.run_id,'media_url':f'https://review.v1su4.dev/api/destination-media/selected-grant/refresh-grid-{self.run_id}/original'}
+        candidate = {**self.payload,'operation_id':'refresh-' + self.run_id,'intent':'refresh-empty','grid':grid,'metadata':{'model':'Source model','prompt':'Filled prompt','notes':'New notes','customFields':[{'id':'flag','label':'Flag','kind':'boolean','value':True},{'id':'zero','label':'Zero','kind':'number','value':9},{'id':'look','label':'Look','kind':'text','value':'Moonlight'}]}}
+        request = Mock(body=json.dumps(candidate),headers={'authorization':'Bearer test-ingest-only'})
+        self.assertEqual(app.refresh_review_metadata(request).status_code,200)
+        public = app.get_document(Mock(headers={},path_params={'run_id':self.run_id,'file':'artifacts.json'}))
+        values = json.loads(public.description)
+        current = next(item for item in values if item['artifact_id']==artifact['artifact_id'])
+        self.assertEqual(current['video_model'],'Target model')
+        self.assertEqual(current['version_prompt'],'Filled prompt')
+        self.assertEqual(current['notes'],'Keep notes')
+        self.assertEqual([field['value'] for field in current['creative_metadata']['customFields']],[False,0,'Moonlight'])
+        self.assertEqual(current['version_number'],1)
+        self.assertEqual(current['created_at'],artifact['created_at'])
+        self.assertEqual(current['shot_grid_url'],grid['media_url'])
+        app.initialize()
+        self.assertEqual(app.refresh_review_metadata(request).status_code,200)
+        public = app.get_document(Mock(headers={},path_params={'run_id':self.run_id,'file':'artifacts.json'}))
+        self.assertEqual(json.loads(public.description),values)
+        login = app.login(Mock(body=json.dumps({'username':'gordo','password':'test'}),headers={'origin':'https://trailer-feed.vercel.app'}))
+        token = json.loads(login.description)['token']
+        edit = Mock(body=json.dumps({'run_id':self.run_id,'prompt':'','video_model':'Target model','revision':current['context_revision'],'grid':{'artifact_id':current['shot_grid_artifact_id']}}),headers={'authorization':'Bearer ' + token},path_params={'id':artifact['artifact_id']})
+        self.assertEqual(app.version_details(edit).status_code,200)
+        self.assertEqual(app.refresh_review_metadata(request).status_code,200)
+        public = app.get_document(Mock(headers={},path_params={'run_id':self.run_id,'file':'artifacts.json'}))
+        self.assertEqual(next(item for item in json.loads(public.description) if item['artifact_id']==artifact['artifact_id'])['version_prompt'],'')
+
+    def test_metadata_refresh_preserves_populated_images_and_never_reactivates_suppression(self):
+        self.assertEqual(self.reserve([self.payload],self.payload['batch_id']).status_code,201)
+        grid = {'source_version_id':'keep-grid-' + self.run_id,'media_url':f'https://review.v1su4.dev/api/destination-media/selected-grant/keep-grid-{self.run_id}/original'}
+        image = {'source_version_id':'keep-image-' + self.run_id,'media_url':f'https://review.v1su4.dev/api/destination-media/selected-grant/keep-image-{self.run_id}/original'}
+        artifact = json.loads(self.ingest({**self.payload,'grid':grid,'references':[image]}).description)['artifact']
+        before = json.loads(app.get_document(Mock(headers={},path_params={'run_id':self.run_id,'file':'artifacts.json'})).description)
+        incoming = {**self.payload,'intent':'refresh-empty','operation_id':'protected-refresh-' + self.run_id,'grid':{'source_version_id':'new-grid-' + self.run_id,'media_url':f'https://review.v1su4.dev/api/destination-media/selected-grant/new-grid-{self.run_id}/original'},'references':[{'source_version_id':'new-image-' + self.run_id,'media_url':f'https://review.v1su4.dev/api/destination-media/selected-grant/new-image-{self.run_id}/original'}]}
+        request = Mock(body=json.dumps(incoming),headers={'authorization':'Bearer test-ingest-only'})
+        self.assertEqual(app.refresh_review_metadata(request).status_code,200)
+        after = json.loads(app.get_document(Mock(headers={},path_params={'run_id':self.run_id,'file':'artifacts.json'})).description)
+        self.assertEqual(after,before)
+        login = app.login(Mock(body=json.dumps({'username':'gordo','password':'test'}),headers={'origin':'https://trailer-feed.vercel.app'}))
+        token = json.loads(login.description)['token']
+        removal = Mock(body=json.dumps({'run_id':self.run_id,'confirm_artifact_id':artifact['artifact_id'],'expected_generation':1}),headers={'authorization':'Bearer ' + token},path_params={'id':artifact['artifact_id']})
+        self.assertEqual(app.remove_external_version(removal).status_code,200)
+        self.assertEqual(app.refresh_review_metadata(request).status_code,409)
+        public = app.get_document(Mock(headers={},path_params={'run_id':self.run_id,'file':'artifacts.json'}))
+        self.assertEqual(json.loads(public.description),[])
+
     def test_explicit_exact_version_reactivation_advances_consent_and_rejects_old_delivery_or_removal(self):
         self.assertEqual(self.reserve([self.payload], self.payload['batch_id']).status_code, 201)
         artifact = json.loads(self.ingest().description)['artifact']

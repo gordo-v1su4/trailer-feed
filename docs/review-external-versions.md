@@ -32,6 +32,12 @@ Server-only `POST /external/review/source-deletions` accepts exact `source_asset
 
 Deleted image versions also receive terminal tombstones. Their matching external grid/reference attachments and parent links are removed deliberately while the video, Vn and populated target edits remain. Delayed initial delivery omits tombstoned images instead of recreating them. Distinct unallocated tombstone identities do not consume project Vn or collide with one another. Review emits these removals durably in its normal owner deletion/purge transaction, revokes root grants immediately, contracts deleted image allowlists and clears source reference metadata with a new revision.
 
-Still required: unsync, fill-empty-only metadata refresh, explicit replacement of a deleted folder connection, service provisioning, deployments and live acceptance. Local checks prove implementation behavior, not deployed cross-app acceptance.
+## Explicit fill-empty metadata refresh
+
+Server-only `POST /external/review/metadata-refreshes` requires `intent: "refresh-empty"`, immutable `operation_id`, exact source identity/generation, target `run_id`, controlled root `media_url`, and candidate metadata/grid/references. It accepts only a registered mapping at the same generation. Suppression, source deletion and a missing project/artifact reject refresh before mutation; refresh cannot reactivate a version.
+
+Only empty target fields are filled. Populated model, prompt, notes, grid and references remain, as do custom values including `false` and `0`; custom identities/kinds stay stable. Deleted reference tombstones are respected. Target Vn, created date, identity and media URL stay unchanged. Changed context increments its revision to protect concurrent owner edits. SQLite stores a request hash and receipt for each operation so a lost-response replay neither adds duplicate images nor refills a field the owner cleared after that operation.
+
+Still required: Review-side refresh consent/transport/UI, unsync, explicit replacement of a deleted folder connection, service provisioning, deployments and live acceptance. Local checks prove implementation behavior, not deployed cross-app acceptance.
 
 Backend verification on Windows: `uv run --with robyn==0.88.0 --with httpx==0.28.1 python -X utf8 -m unittest discover -s backend`. UTF-8 mode is required for the existing catalog seed files.

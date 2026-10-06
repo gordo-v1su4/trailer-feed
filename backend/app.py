@@ -54,6 +54,7 @@ def initialize():
         CREATE TABLE IF NOT EXISTS deleted_runs (run_id TEXT PRIMARY KEY, deleted_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS external_versions (source_app TEXT NOT NULL, source_asset_id TEXT NOT NULL, source_version_id TEXT NOT NULL, run_id TEXT NOT NULL, artifact_id TEXT NOT NULL UNIQUE, version INTEGER NOT NULL, PRIMARY KEY(source_app,source_asset_id,source_version_id), UNIQUE(run_id,version));
         CREATE TABLE IF NOT EXISTS external_batches (batch_id TEXT PRIMARY KEY, run_id TEXT NOT NULL, selection TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS external_refreshes (operation_id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, receipt TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS external_connections (source_project_id TEXT NOT NULL, source_folder_id TEXT NOT NULL, run_id TEXT NOT NULL, PRIMARY KEY(source_project_id,source_folder_id));
         CREATE TABLE IF NOT EXISTS version_counters (run_id TEXT PRIMARY KEY, last_version INTEGER NOT NULL);
         PRAGMA user_version=3;
@@ -621,6 +622,87 @@ def register_external_version(request: Request):
             run['status'] = 'ready_for_review'
             db.execute("UPDATE documents SET value=? WHERE run_id=? AND kind='run'", (json.dumps(run), run_id))
     return reply(request, {'artifact': artifact, 'existing': False}, 201)
+
+
+def refresh_empty(value):
+    return value is None or value == '' or (isinstance(value, list) and not value)
+
+
+@app.post('/external/review/metadata-refreshes')
+def refresh_review_metadata(request: Request):
+    denied = review_ingest_error(request)
+    if denied is not None:
+        return denied
+    try:
+        if len(request.body) > 1500000:
+            raise ValueError()
+        payload = json.loads(request.body)
+        operation_id, run_id = payload['operation_id'], payload['run_id']
+        if payload['intent'] != 'refresh-empty' or any(not isinstance(value, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', value) for value in (operation_id, run_id)):
+            raise ValueError()
+        identity = external_identity(payload)
+        slug = review_resolver_url(payload['media_url'], identity['source_version_id'])
+        metadata = external_creative_metadata(payload.get('metadata', {}))
+        references, grid = payload.get('references', []), payload.get('grid')
+        if not isinstance(references, list) or len(references) > 20:
+            raise ValueError()
+        images = []
+        for image, kind in ([(grid, 'shot_grid')] if grid is not None else []) + [(image, 'image_result') for image in references]:
+            image_id = image['source_version_id']
+            if not isinstance(image_id, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', image_id) or review_resolver_url(image['media_url'], image_id) != slug:
+                raise ValueError()
+            images.append({'source_version_id':image_id, 'media_url':image['media_url'], 'artifact_type':kind})
+        fingerprint = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+    except (ValueError, KeyError, TypeError, AttributeError, OverflowError):
+        return reply(request, {'error': 'Confirm an exact version and controlled metadata/image refresh'}, 400)
+    with lock, connect() as db:
+        db.execute('BEGIN IMMEDIATE')
+        row = db.execute("SELECT * FROM external_versions WHERE source_app='review-room' AND source_asset_id=? AND source_version_id=?", (identity['source_asset_id'], identity['source_version_id'])).fetchone()
+        if not row or row['state'] != 'registered' or row['run_id'] != run_id or row['generation'] != identity['consent_generation']:
+            return reply(request, {'error': 'Version is disconnected; metadata refresh cannot reactivate it'}, 409)
+        artifacts = document(db, run_id, 'artifacts') or []
+        artifact = next((item for item in artifacts if item['artifact_id'] == row['artifact_id']), None)
+        if not artifact or not document(db, run_id, 'run'):
+            return reply(request, {'error': 'Connected version no longer exists'}, 409)
+        saved = db.execute('SELECT * FROM external_refreshes WHERE operation_id=?', (operation_id,)).fetchone()
+        if saved:
+            return reply(request, json.loads(saved['receipt'])) if saved['fingerprint'] == fingerprint else reply(request, {'error': 'Refresh identity has different consent'}, 409)
+        before = json.dumps(artifact, sort_keys=True)
+        for field, source in (('video_model', 'model'), ('version_prompt', 'prompt'), ('notes', 'notes')):
+            if refresh_empty(artifact.get(field)):
+                artifact[field] = metadata[source]
+        target = artifact.setdefault('creative_metadata', {})
+        for field, value in metadata.items():
+            if field != 'customFields' and refresh_empty(target.get(field)):
+                target[field] = value
+        fields = target.setdefault('customFields', [])
+        for incoming in metadata['customFields']:
+            current = next((field for field in fields if field['id'] == incoming['id']), None)
+            if current is None:
+                if len(fields) >= 30:
+                    return reply(request, {'error': 'Target custom field limit reached'}, 409)
+                fields.append(incoming)
+            elif current['kind'] == incoming['kind'] and refresh_empty(current.get('value')):
+                current['value'] = incoming['value']
+        want_grid = refresh_empty(artifact.get('shot_grid_url'))
+        want_references = refresh_empty(artifact.get('reference_image_ids'))
+        for image in images:
+            if (image['artifact_type'] == 'shot_grid' and not want_grid) or (image['artifact_type'] == 'image_result' and not want_references) or db.execute("SELECT 1 FROM external_versions WHERE source_app='review-room' AND source_version_id=? AND state='source_deleted'", (image['source_version_id'],)).fetchone():
+                continue
+            image_id = 'review-image-' + hashlib.sha256(json.dumps([identity['source_asset_id'], identity['source_version_id'], image['source_version_id'], image['artifact_type']]).encode()).hexdigest()[:32]
+            if not any(item['artifact_id'] == image_id for item in artifacts):
+                artifacts.append({**image, 'artifact_id': image_id, 'run_id': run_id, 'title': 'Review image', 'created_at': artifact['created_at'], 'provider': 'unknown', 'source': 'manual', 'status': 'generated', 'ownership': 'external', 'source_app': 'review-room', 'source_parent_artifact_id': artifact['artifact_id']})
+            if image['artifact_type'] == 'shot_grid':
+                artifact.update(shot_grid_url=image['media_url'], shot_grid_artifact_id=image_id)
+            else:
+                artifact.setdefault('reference_image_ids', []).append(image_id)
+        changed = before != json.dumps(artifact, sort_keys=True)
+        if changed:
+            artifact['context_revision'] = artifact.get('context_revision', 0) + 1
+            db.execute('UPDATE documents SET value=? WHERE run_id=? AND kind=?', (json.dumps(artifacts), run_id, 'artifacts'))
+        receipt = {'operation_id': operation_id, 'source_asset_id': identity['source_asset_id'], 'source_version_id': identity['source_version_id'], 'consent_generation': row['generation'], 'artifact_id': row['artifact_id'], 'version_number': row['version'], 'changed': changed}
+        db.execute('INSERT INTO external_refreshes VALUES (?,?,?)', (operation_id, fingerprint, json.dumps(receipt)))
+    return reply(request, receipt)
 
 
 @app.post('/versions')
