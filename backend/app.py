@@ -434,14 +434,30 @@ def delete_review_source_version(request: Request):
         row = db.execute("SELECT * FROM external_versions WHERE source_app='review-room' AND source_asset_id=? AND source_version_id=?", (asset_id, version_id)).fetchone()
         if not row:
             artifact_id = 'review-' + hashlib.sha256(json.dumps(['review-room', asset_id, version_id]).encode()).hexdigest()[:32]
-            db.execute('INSERT INTO external_versions (source_app,source_asset_id,source_version_id,run_id,artifact_id,version,state,generation) VALUES (?,?,?,?,?,?,?,?)', ('review-room', asset_id, version_id, '', artifact_id, 0, 'source_deleted', generation))
-            return reply(request, {'source_asset_id': asset_id, 'source_version_id': version_id, 'consent_generation': generation, 'state': 'source_deleted'})
+            # A distinct non-project identity avoids the unique target-(run,Vn) constraint.
+            db.execute('INSERT INTO external_versions (source_app,source_asset_id,source_version_id,run_id,artifact_id,version,state,generation) VALUES (?,?,?,?,?,?,?,?)', ('review-room', asset_id, version_id, 'deleted-' + artifact_id, artifact_id, 0, 'source_deleted', generation))
+            row = db.execute("SELECT * FROM external_versions WHERE source_app='review-room' AND source_asset_id=? AND source_version_id=?", (asset_id, version_id)).fetchone()
         generation = max(generation, row['generation'])
         db.execute("UPDATE external_versions SET state='source_deleted',generation=? WHERE artifact_id=?", (generation, row['artifact_id']))
-        artifacts = document(db, row['run_id'], 'artifacts')
-        if artifacts is not None:
-            kept = [item for item in artifacts if item['artifact_id'] != row['artifact_id'] and not (item.get('ownership') == 'external' and item.get('source_parent_artifact_id') == row['artifact_id'])]
-            db.execute('INSERT OR REPLACE INTO documents VALUES (?,?,?)', (row['run_id'], 'artifacts', json.dumps(kept)))
+        for catalog in db.execute("SELECT run_id,value FROM documents WHERE kind='artifacts'").fetchall():
+            artifacts = json.loads(catalog['value'])
+            removed = {item['artifact_id'] for item in artifacts if item.get('ownership') == 'external' and item.get('source_app') == 'review-room' and (item['artifact_id'] == row['artifact_id'] or item.get('source_parent_artifact_id') == row['artifact_id'] or item.get('source_version_id') == version_id)}
+            if not removed:
+                continue
+            kept = [item for item in artifacts if item['artifact_id'] not in removed]
+            for item in kept:
+                if item.get('ownership') != 'external' or item.get('source_app') != 'review-room':
+                    continue
+                item['reference_image_ids'] = [identity for identity in item.get('reference_image_ids', []) if identity not in removed]
+                if item.get('shot_grid_artifact_id') in removed:
+                    item.pop('shot_grid_url', None)
+                    item.pop('shot_grid_artifact_id', None)
+                metadata = item.get('creative_metadata')
+                if isinstance(metadata, dict):
+                    metadata['referenceImageVersionIds'] = [identity for identity in metadata.get('referenceImageVersionIds', []) if identity != version_id]
+                    if metadata.get('gridImageVersionId') == version_id:
+                        metadata.pop('gridImageVersionId', None)
+            db.execute('UPDATE documents SET value=? WHERE run_id=? AND kind=?', (json.dumps(kept), catalog['run_id'], 'artifacts'))
     return reply(request, {'source_asset_id': asset_id, 'source_version_id': version_id, 'consent_generation': generation, 'state': 'source_deleted'})
 
 
@@ -579,6 +595,11 @@ def register_external_version(request: Request):
         if not document(db, run_id, 'run'):
             return reply(request, {'error': 'Connected project not found'}, 404)
         artifacts = document(db, run_id, 'artifacts') or []
+        deleted_references = {image['source_version_id'] for image in attachments if db.execute("SELECT 1 FROM external_versions WHERE source_app='review-room' AND source_version_id=? AND state='source_deleted'", (image['source_version_id'],)).fetchone()}
+        attachments = [image for image in attachments if image['source_version_id'] not in deleted_references]
+        metadata['referenceImageVersionIds'] = [identity for identity in metadata.get('referenceImageVersionIds', []) if identity not in deleted_references]
+        if metadata.get('gridImageVersionId') in deleted_references:
+            metadata.pop('gridImageVersionId', None)
         number, artifact_id = existing['version'], existing['artifact_id']
         artifact = {'artifact_id': artifact_id, 'run_id': run_id, 'title': metadata['sourceLabel'] or f'Review version {number}', 'created_at': identity['source_created_at'], 'provider': 'unknown', 'source': 'manual', 'artifact_type': 'video_result', 'status': 'generated', 'ownership': 'external', 'source_app': 'review-room', 'source_asset_id': asset_id, 'source_version_id': version_id, 'consent_generation': identity['consent_generation'], 'version_number': number, 'media_url': media_url, 'video_model': metadata['model'], 'version_prompt': metadata['prompt'], 'notes': metadata['notes'], 'creative_metadata': metadata, 'reference_image_ids': []}
         if poster_url is not None:

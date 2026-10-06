@@ -204,6 +204,39 @@ class ExternalVersionTests(unittest.TestCase):
         status = app.external_version_status(Mock(body=json.dumps({'versions': [self.payload]}), headers={'authorization': 'Bearer test-ingest-only'}))
         self.assertEqual(json.loads(status.description)['versions'][0]['state'], 'source_deleted')
 
+    def test_deleted_source_reference_is_removed_deliberately_without_removing_video_or_target_edits(self):
+        self.assertEqual(self.reserve([self.payload], self.payload['batch_id']).status_code, 201)
+        grid = {'source_version_id':'deleted-grid', 'media_url':'https://review.v1su4.dev/api/destination-media/selected-grant/deleted-grid/original'}
+        payload = {**self.payload, 'grid':grid}
+        artifact = json.loads(self.ingest(payload).description)['artifact']
+        with app.connect() as db:
+            values = app.document(db,self.run_id,'artifacts')
+            next(item for item in values if item['artifact_id'] == artifact['artifact_id'])['notes'] = 'Target notes stay'
+            db.execute('UPDATE documents SET value=? WHERE run_id=? AND kind=?',(json.dumps(values),self.run_id,'artifacts'))
+        deletion = Mock(body=json.dumps({'source_asset_id':'reference-asset', 'source_version_id':'deleted-grid', 'consent_generation':1}),headers={'authorization':'Bearer test-ingest-only'})
+        self.assertEqual(app.delete_review_source_version(deletion).status_code,200)
+        public = app.get_document(Mock(headers={},path_params={'run_id':self.run_id,'file':'artifacts.json'}))
+        values = json.loads(public.description)
+        self.assertEqual(len(values),1)
+        self.assertEqual(values[0]['artifact_id'],artifact['artifact_id'])
+        self.assertEqual(values[0]['notes'],'Target notes stay')
+        self.assertNotIn('shot_grid_url',values[0])
+        # A delayed source payload cannot restore the deleted image attachment.
+        self.assertEqual(self.ingest(payload).status_code,200)
+        public = app.get_document(Mock(headers={},path_params={'run_id':self.run_id,'file':'artifacts.json'}))
+        self.assertEqual(len(json.loads(public.description)),1)
+
+    def test_deleted_reference_tombstone_fences_delayed_initial_video_delivery(self):
+        self.assertEqual(self.reserve([self.payload], self.payload['batch_id']).status_code,201)
+        deletion = Mock(body=json.dumps({'source_asset_id':'reference-' + self.run_id, 'source_version_id':'grid-' + self.run_id, 'consent_generation':1}),headers={'authorization':'Bearer test-ingest-only'})
+        self.assertEqual(app.delete_review_source_version(deletion).status_code,200)
+        grid = {'source_version_id':'grid-' + self.run_id, 'media_url':f'https://review.v1su4.dev/api/destination-media/selected-grant/grid-{self.run_id}/original'}
+        self.assertEqual(self.ingest({**self.payload,'grid':grid}).status_code,201)
+        public = app.get_document(Mock(headers={},path_params={'run_id':self.run_id,'file':'artifacts.json'}))
+        values = json.loads(public.description)
+        self.assertEqual(len(values),1)
+        self.assertNotIn('shot_grid_url',values[0])
+
     def test_explicit_exact_version_reactivation_advances_consent_and_rejects_old_delivery_or_removal(self):
         self.assertEqual(self.reserve([self.payload], self.payload['batch_id']).status_code, 201)
         artifact = json.loads(self.ingest().description)['artifact']
