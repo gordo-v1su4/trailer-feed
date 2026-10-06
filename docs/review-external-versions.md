@@ -16,4 +16,14 @@ Reserved slots survive restart and partial delivery: a later successful delivery
 
 Remaining required work: Review connection/selection UI and durable outbox; persistent target suppression and generation-aware reactivation; source-deletion delivery and fill-empty refresh; service-key provisioning; deployments and browser acceptance. Existing local uploads and unrelated checkout edits remain intact.
 
+## Suppression and reactivation implementation
+
+The stacked `codex/external-version-suppression` branch adds owner-confirmed `POST /versions/<artifact_id>/remove` with `run_id`, `confirm_artifact_id` and `expected_generation`. External removal persists `target_suppressed` before dropping the root and its external image attachments. It does not call storage or Review. Project removal also suppresses registered and reserved mappings after its existing target-storage cleanup succeeds. Source-deleted state is retained if a target removal is repeated.
+
+Server-side `POST /external/review/status` reports exact source states, target identity and `consent_generation` for reconciliation. Every batch identity, reservation and delivered root carries a consent generation (initially1). Old delivery/batch retries cannot restore suppressed entries or act on a newer generation. A stale owner removal receives409 instead of deleting a reactivated version.
+
+`POST /external/review/reactivations` requires `intent: "sync-again"`, exact source identity/date, target `run_id`, a new immutable `batch_id`, and the current `expected_generation`. It reserves the next generation for that exact suppressed version; normal version delivery then uses its new batch/generation and a fresh Review grant. The operation replay is idempotent. Reactivation preserves Vn in the same target; another explicitly selected target gets a new local Vn. Independent persistent version counters retain the old project's allocation history after a move. Local upload allocation shares that counter under an immediate transaction.
+
+Still required: source grant generation alignment, target remove UI, explicit replacement of a deleted folder connection, terminal source-delete transport, metadata refresh, service provisioning, deployments and live acceptance. This checkpoint is backend evidence only.
+
 Backend verification on Windows: `uv run --with robyn==0.88.0 --with httpx==0.28.1 python -X utf8 -m unittest discover -s backend`. UTF-8 mode is required for the existing catalog seed files.

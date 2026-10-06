@@ -55,10 +55,18 @@ def initialize():
         CREATE TABLE IF NOT EXISTS external_versions (source_app TEXT NOT NULL, source_asset_id TEXT NOT NULL, source_version_id TEXT NOT NULL, run_id TEXT NOT NULL, artifact_id TEXT NOT NULL UNIQUE, version INTEGER NOT NULL, PRIMARY KEY(source_app,source_asset_id,source_version_id), UNIQUE(run_id,version));
         CREATE TABLE IF NOT EXISTS external_batches (batch_id TEXT PRIMARY KEY, run_id TEXT NOT NULL, selection TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS external_connections (source_project_id TEXT NOT NULL, source_folder_id TEXT NOT NULL, run_id TEXT NOT NULL, PRIMARY KEY(source_project_id,source_folder_id));
-        PRAGMA user_version=2;
+        CREATE TABLE IF NOT EXISTS version_counters (run_id TEXT PRIMARY KEY, last_version INTEGER NOT NULL);
+        PRAGMA user_version=3;
         ''')
         if 'state' not in {row['name'] for row in db.execute('PRAGMA table_info(external_versions)')}:
             db.execute("ALTER TABLE external_versions ADD COLUMN state TEXT NOT NULL DEFAULT 'registered'")
+        if 'generation' not in {row['name'] for row in db.execute('PRAGMA table_info(external_versions)')}:
+            db.execute('ALTER TABLE external_versions ADD COLUMN generation INTEGER NOT NULL DEFAULT 1')
+            for batch in db.execute('SELECT batch_id,selection FROM external_batches').fetchall():
+                selection = json.loads(batch['selection'])
+                for item in selection:
+                    item.setdefault('consent_generation', 1)
+                db.execute('UPDATE external_batches SET selection=? WHERE batch_id=?', (json.dumps(selection, sort_keys=True), batch['batch_id']))
         seed = Path(os.getenv('SEED_DIR', '/app/seed'))
         for folder in seed.glob('*'):
             if not folder.is_dir():
@@ -214,7 +222,10 @@ def external_identity(payload):
     created_at = datetime.fromisoformat(payload['source_created_at'])
     if created_at.tzinfo is None:
         raise ValueError()
-    return {'source_asset_id': asset_id, 'source_version_id': version_id, 'source_created_at': created_at.astimezone(timezone.utc).isoformat()}
+    generation = payload.get('consent_generation', 1)
+    if isinstance(generation, bool) or not isinstance(generation, int) or not 1 <= generation <= 2147483647:
+        raise ValueError()
+    return {'source_asset_id': asset_id, 'source_version_id': version_id, 'source_created_at': created_at.astimezone(timezone.utc).isoformat(), 'consent_generation': generation}
 
 
 @app.post('/external/review/connections')
@@ -276,6 +287,15 @@ def review_resolver_url(value, version_id, variant='original'):
     if parsed.scheme != 'https' or parsed.netloc != 'review.v1su4.dev' or parsed.fragment or parsed.query not in ('', 'cors=1') or not match:
         raise ValueError()
     return match[1]
+
+
+def allocated_version_ceiling(db, run_id):
+    videos = [item for item in (document(db, run_id, 'artifacts') or []) if item.get('artifact_type') in ('video_result', 'end_video', 'video')]
+    highest = max([int(item.get('version_number', index + 1)) for index, item in enumerate(videos)] + [0])
+    uploaded = db.execute('SELECT max(version) FROM uploads WHERE run_id=?', (run_id,)).fetchone()[0] or 0
+    external = db.execute('SELECT max(version) FROM external_versions WHERE run_id=?', (run_id,)).fetchone()[0] or 0
+    counter = db.execute('SELECT last_version FROM version_counters WHERE run_id=?', (run_id,)).fetchone()
+    return max(highest, uploaded, external, counter['last_version'] if counter else 0)
 
 
 def external_creative_metadata(metadata):
@@ -352,23 +372,120 @@ def reserve_external_batch(request: Request):
         existing = [db.execute("SELECT * FROM external_versions WHERE source_app='review-room' AND source_asset_id=? AND source_version_id=?", (item['source_asset_id'], item['source_version_id'])).fetchone() for item in versions]
         if any(row and row['run_id'] != run_id for row in existing):
             return reply(request, {'error': 'Source version is already connected to another project'}, 409)
+        if any(row and row['generation'] != item['consent_generation'] for row, item in zip(existing, versions)):
+            return reply(request, {'error': 'Source consent generation changed'}, 409)
         if any(row and row['state'] not in ('reserved', 'registered') for row in existing):
             return reply(request, {'error': 'Source version requires explicit reactivation'}, 409)
-        videos = [item for item in (document(db, run_id, 'artifacts') or []) if item.get('artifact_type') in ('video_result', 'end_video', 'video')]
-        highest = max([int(item.get('version_number', index + 1)) for index, item in enumerate(videos)] + [0])
-        uploaded = db.execute('SELECT max(version) FROM uploads WHERE run_id=?', (run_id,)).fetchone()[0] or 0
-        external = db.execute('SELECT max(version) FROM external_versions WHERE run_id=?', (run_id,)).fetchone()[0] or 0
-        number = max(highest, uploaded, external)
+        number = allocated_version_ceiling(db, run_id)
         allocated = []
         for item, row in zip(versions, existing):
             if not row:
                 number += 1
                 artifact_id = 'review-' + hashlib.sha256(json.dumps(['review-room', item['source_asset_id'], item['source_version_id']]).encode()).hexdigest()[:32]
-                db.execute('INSERT INTO external_versions VALUES (?,?,?,?,?,?,?)', ('review-room', item['source_asset_id'], item['source_version_id'], run_id, artifact_id, number, 'reserved'))
+                db.execute('INSERT INTO external_versions (source_app,source_asset_id,source_version_id,run_id,artifact_id,version,state,generation) VALUES (?,?,?,?,?,?,?,?)', ('review-room', item['source_asset_id'], item['source_version_id'], run_id, artifact_id, number, 'reserved', item['consent_generation']))
                 row = {'version': number, 'artifact_id': artifact_id, 'state': 'reserved'}
             allocated.append({**item, 'version_number': row['version'], 'artifact_id': row['artifact_id'], 'state': row['state']})
         db.execute('INSERT OR IGNORE INTO external_batches VALUES (?,?,?)', (batch_id, run_id, selection))
+        db.execute('INSERT OR REPLACE INTO version_counters VALUES (?,?)', (run_id, number))
     return reply(request, {'batch_id': batch_id, 'versions': allocated}, 200 if batch else 201)
+
+
+@app.post('/external/review/status')
+def external_version_status(request: Request):
+    denied = review_ingest_error(request)
+    if denied is not None:
+        return denied
+    try:
+        if len(request.body) > 150000:
+            raise ValueError()
+        versions = json.loads(request.body)['versions']
+        if not isinstance(versions, list) or not 1 <= len(versions) <= 100:
+            raise ValueError()
+        identities = [(item['source_asset_id'], item['source_version_id']) for item in versions]
+        if any(not isinstance(value, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', value) for item in identities for value in item):
+            raise ValueError()
+    except (ValueError, KeyError, TypeError, AttributeError):
+        return reply(request, {'error': 'Provide exact source versions'}, 400)
+    result = []
+    with connect() as db:
+        for asset_id, version_id in identities:
+            row = db.execute("SELECT * FROM external_versions WHERE source_app='review-room' AND source_asset_id=? AND source_version_id=?", (asset_id, version_id)).fetchone()
+            result.append({'source_asset_id': asset_id, 'source_version_id': version_id, 'state': row['state'] if row else 'unregistered', **({'run_id': row['run_id'], 'artifact_id': row['artifact_id'], 'version_number': row['version'], 'consent_generation': row['generation']} if row else {})})
+    return reply(request, {'versions': result})
+
+
+@app.post('/versions/:id/remove')
+def remove_external_version(request: Request):
+    if not authorized(request):
+        return reply(request, {'error': 'Sign in to remove this version'}, 401)
+    try:
+        payload = json.loads(request.body)
+        artifact_id = request.path_params['id']
+        run_id = payload['run_id']
+        generation = payload.get('expected_generation', 1)
+        if not isinstance(run_id, str) or payload['confirm_artifact_id'] != artifact_id or isinstance(generation, bool) or not isinstance(generation, int) or generation < 1:
+            raise ValueError()
+    except (ValueError, KeyError, TypeError):
+        return reply(request, {'error': 'Confirm the exact selected version'}, 400)
+    with lock, connect() as db:
+        db.execute('BEGIN IMMEDIATE')
+        row = db.execute('SELECT * FROM external_versions WHERE artifact_id=? AND run_id=?', (artifact_id, run_id)).fetchone()
+        if not row:
+            return reply(request, {'error': 'External version not found'}, 404)
+        if row['generation'] != generation:
+            return reply(request, {'error': 'Version consent changed; reload before removing it'}, 409)
+        # Retain terminal source deletion if this is a repeated target removal.
+        if row['state'] != 'source_deleted':
+            db.execute("UPDATE external_versions SET state='target_suppressed' WHERE artifact_id=?", (artifact_id,))
+        artifacts = document(db, run_id, 'artifacts')
+        if artifacts is not None:
+            surviving = [item for item in artifacts if item['artifact_id'] != artifact_id and item.get('source_parent_artifact_id') != artifact_id]
+            db.execute("UPDATE documents SET value=? WHERE run_id=? AND kind='artifacts'", (json.dumps(surviving), run_id))
+    return reply(request, {'deleted': True, 'artifact_id': artifact_id, 'state': 'source_deleted' if row['state'] == 'source_deleted' else 'target_suppressed'})
+
+
+@app.post('/external/review/reactivations')
+def reactivate_external_version(request: Request):
+    denied = review_ingest_error(request)
+    if denied is not None:
+        return denied
+    try:
+        if len(request.body) > 4096:
+            raise ValueError()
+        payload = json.loads(request.body)
+        expected = payload['expected_generation']
+        if payload['intent'] != 'sync-again' or isinstance(expected, bool) or not isinstance(expected, int) or not 1 <= expected < 2147483647:
+            raise ValueError()
+        run_id, batch_id = payload['run_id'], payload['batch_id']
+        if any(not isinstance(value, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', value) for value in (run_id, batch_id)):
+            raise ValueError()
+        identity = external_identity({**payload, 'consent_generation': expected + 1})
+        selection = json.dumps([identity], sort_keys=True)
+    except (ValueError, KeyError, TypeError, AttributeError):
+        return reply(request, {'error': 'Confirm Sync again for this exact version and current generation'}, 400)
+    with lock, connect() as db:
+        db.execute('BEGIN IMMEDIATE')
+        row = db.execute("SELECT * FROM external_versions WHERE source_app='review-room' AND source_asset_id=? AND source_version_id=?", (identity['source_asset_id'], identity['source_version_id'])).fetchone()
+        if not row:
+            return reply(request, {'error': 'Suppressed source version not found'}, 404)
+        batch = db.execute('SELECT * FROM external_batches WHERE batch_id=?', (batch_id,)).fetchone()
+        if batch:
+            if batch['run_id'] == run_id and batch['selection'] == selection and row['run_id'] == run_id and row['generation'] == expected + 1 and row['state'] in ('reserved', 'registered'):
+                return reply(request, {'batch_id': batch_id, 'consent_generation': row['generation'], 'version_number': row['version']})
+            return reply(request, {'error': 'Reactivation operation has different or superseded consent'}, 409)
+        if row['state'] != 'target_suppressed' or row['generation'] != expected:
+            return reply(request, {'error': 'Source version is not suppressed at this consent generation'}, 409)
+        if not document(db, run_id, 'run'):
+            return reply(request, {'error': 'Choose an existing target project before reactivation'}, 404)
+        number = row['version']
+        old_ceiling = allocated_version_ceiling(db, row['run_id'])
+        db.execute('INSERT OR REPLACE INTO version_counters VALUES (?,?)', (row['run_id'], old_ceiling))
+        if row['run_id'] != run_id:
+            number = allocated_version_ceiling(db, run_id) + 1
+        db.execute('INSERT OR REPLACE INTO version_counters VALUES (?,?)', (run_id, max(number, allocated_version_ceiling(db, run_id))))
+        db.execute("UPDATE external_versions SET state='reserved',generation=?,run_id=?,version=? WHERE artifact_id=?", (expected + 1, run_id, number, row['artifact_id']))
+        db.execute('INSERT INTO external_batches VALUES (?,?,?)', (batch_id, run_id, selection))
+    return reply(request, {'batch_id': batch_id, 'consent_generation': expected + 1, 'version_number': number}, 201)
 
 
 @app.post('/external/review/versions')
@@ -413,6 +530,8 @@ def register_external_version(request: Request):
         if existing:
             if existing['run_id'] != run_id:
                 return reply(request, {'error': 'Source version is already connected to another project'}, 409)
+            if existing['generation'] != identity['consent_generation']:
+                return reply(request, {'error': 'Source consent generation changed'}, 409)
             artifact = next((item for item in (document(db, run_id, 'artifacts') or []) if item['artifact_id'] == existing['artifact_id']), None)
             if existing['state'] not in ('reserved', 'registered') or (existing['state'] == 'registered' and not artifact):
                 return reply(request, {'error': 'Source version is disconnected; explicit reactivation required'}, 409)
@@ -424,7 +543,7 @@ def register_external_version(request: Request):
             return reply(request, {'error': 'Connected project not found'}, 404)
         artifacts = document(db, run_id, 'artifacts') or []
         number, artifact_id = existing['version'], existing['artifact_id']
-        artifact = {'artifact_id': artifact_id, 'run_id': run_id, 'title': metadata['sourceLabel'] or f'Review version {number}', 'created_at': identity['source_created_at'], 'provider': 'unknown', 'source': 'manual', 'artifact_type': 'video_result', 'status': 'generated', 'ownership': 'external', 'source_app': 'review-room', 'source_asset_id': asset_id, 'source_version_id': version_id, 'version_number': number, 'media_url': media_url, 'video_model': metadata['model'], 'version_prompt': metadata['prompt'], 'notes': metadata['notes'], 'creative_metadata': metadata, 'reference_image_ids': []}
+        artifact = {'artifact_id': artifact_id, 'run_id': run_id, 'title': metadata['sourceLabel'] or f'Review version {number}', 'created_at': identity['source_created_at'], 'provider': 'unknown', 'source': 'manual', 'artifact_type': 'video_result', 'status': 'generated', 'ownership': 'external', 'source_app': 'review-room', 'source_asset_id': asset_id, 'source_version_id': version_id, 'consent_generation': identity['consent_generation'], 'version_number': number, 'media_url': media_url, 'video_model': metadata['model'], 'version_prompt': metadata['prompt'], 'notes': metadata['notes'], 'creative_metadata': metadata, 'reference_image_ids': []}
         if poster_url is not None:
             artifact['thumbnail_url'] = poster_url
         for image in attachments:
@@ -459,6 +578,7 @@ def upload(request: Request):
         return reply(request, {'error':'Choose MP4, MOV or WebM, up to 95 MB'}, 400)
     sha = hashlib.sha256(body).hexdigest()
     with lock, connect() as db:
+        db.execute('BEGIN IMMEDIATE')
         run = document(db,run_id,'run')
         if not run:
             return reply(request, {'error':'Project not found'},404)
@@ -471,11 +591,8 @@ def upload(request: Request):
             return reply(request, {'added':0,'versions':[], 'status':existing['status'], 'upload_id':existing['id'], 'error':existing['error']})
         if any(a.get('media_sha256')==sha or a.get('upload_sha256')==sha for a in artifacts):
             return reply(request, {'added':0,'versions':[],'status':'ready'})
-        videos = [a for a in artifacts if a.get('artifact_type') in ('video_result','video')]
-        highest = max([int(a.get('version_number',i+1)) for i,a in enumerate(videos)]+[0])
-        queued = db.execute('SELECT max(version) FROM uploads WHERE run_id=?',(run_id,)).fetchone()[0] or 0
-        external = db.execute('SELECT max(version) FROM external_versions WHERE run_id=?',(run_id,)).fetchone()[0] or 0
-        version = max(highest,queued,external)+1
+        version = allocated_version_ceiling(db, run_id) + 1
+        db.execute('INSERT OR REPLACE INTO version_counters VALUES (?,?)', (run_id, version))
         uid = secrets.token_hex(16)
         now = datetime.now(timezone.utc)
         key = f'media-uploads/{now:%Y/%m_%d}/{run_id}/versions/v{version}/{sha}{extension}'
@@ -685,6 +802,7 @@ def delete_run(request: Request):
         db.execute('INSERT OR IGNORE INTO deleted_runs VALUES (?,?)',
             (run_id, datetime.now(timezone.utc).isoformat()))
         db.execute('DELETE FROM uploads WHERE run_id=?', (run_id,))
+        db.execute("UPDATE external_versions SET state='target_suppressed' WHERE run_id=? AND state!='source_deleted'", (run_id,))
         db.execute('DELETE FROM documents WHERE run_id=?', (run_id,))
     return reply(request, {'deleted': True, 'run_id': run_id})
 
