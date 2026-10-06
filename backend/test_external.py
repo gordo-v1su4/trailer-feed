@@ -182,19 +182,19 @@ class ExternalVersionTests(unittest.TestCase):
         token = json.loads(login.description)['token']
         removal = Mock(body=json.dumps({'run_id': self.run_id, 'confirm_artifact_id': artifact['artifact_id'], 'expected_generation': 1}), headers={'authorization': 'Bearer ' + token}, path_params={'id': artifact['artifact_id']})
         self.assertEqual(app.remove_external_version(removal).status_code, 200)
-        consent = {**self.payload, 'batch_id': 'again-' + self.run_id, 'intent': 'sync-again', 'expected_generation': 1}
+        consent = {**self.payload, 'batch_id': 'again-' + self.run_id, 'intent': 'sync-again', 'expected_generation': 1, 'consent_generation': 3}
         request = Mock(body=json.dumps(consent), headers={'authorization': 'Bearer test-ingest-only'})
         reactivated = app.reactivate_external_version(request)
         self.assertEqual(reactivated.status_code, 201)
-        self.assertEqual(json.loads(reactivated.description)['consent_generation'], 2)
+        self.assertEqual(json.loads(reactivated.description)['consent_generation'], 3)
         self.assertEqual(app.reactivate_external_version(request).status_code, 200)
         self.assertEqual(self.ingest().status_code, 409)
         self.assertEqual(app.remove_external_version(removal).status_code, 409)
-        fresh = {**self.payload, 'batch_id': consent['batch_id'], 'consent_generation': 2, 'media_url': 'https://review.v1su4.dev/api/destination-media/fresh-grant/version-1/original'}
+        fresh = {**self.payload, 'batch_id': consent['batch_id'], 'consent_generation': 3, 'media_url': 'https://review.v1su4.dev/api/destination-media/fresh-grant/version-1/original'}
         current = self.ingest(fresh)
         self.assertEqual(current.status_code, 201)
         self.assertEqual(json.loads(current.description)['artifact']['version_number'], 1)
-        self.assertEqual(json.loads(current.description)['artifact']['consent_generation'], 2)
+        self.assertEqual(json.loads(current.description)['artifact']['consent_generation'], 3)
         self.assertEqual(self.reserve([self.payload], self.payload['batch_id']).status_code, 409)
         self.assertEqual(app.remove_external_version(removal).status_code, 409)
 

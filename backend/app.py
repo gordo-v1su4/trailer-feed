@@ -456,10 +456,13 @@ def reactivate_external_version(request: Request):
         expected = payload['expected_generation']
         if payload['intent'] != 'sync-again' or isinstance(expected, bool) or not isinstance(expected, int) or not 1 <= expected < 2147483647:
             raise ValueError()
+        next_generation = payload.get('consent_generation', expected + 1)
+        if isinstance(next_generation, bool) or not isinstance(next_generation, int) or not expected < next_generation <= 2147483647:
+            raise ValueError()
         run_id, batch_id = payload['run_id'], payload['batch_id']
         if any(not isinstance(value, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', value) for value in (run_id, batch_id)):
             raise ValueError()
-        identity = external_identity({**payload, 'consent_generation': expected + 1})
+        identity = external_identity({**payload, 'consent_generation': next_generation})
         selection = json.dumps([identity], sort_keys=True)
     except (ValueError, KeyError, TypeError, AttributeError):
         return reply(request, {'error': 'Confirm Sync again for this exact version and current generation'}, 400)
@@ -470,7 +473,7 @@ def reactivate_external_version(request: Request):
             return reply(request, {'error': 'Suppressed source version not found'}, 404)
         batch = db.execute('SELECT * FROM external_batches WHERE batch_id=?', (batch_id,)).fetchone()
         if batch:
-            if batch['run_id'] == run_id and batch['selection'] == selection and row['run_id'] == run_id and row['generation'] == expected + 1 and row['state'] in ('reserved', 'registered'):
+            if batch['run_id'] == run_id and batch['selection'] == selection and row['run_id'] == run_id and row['generation'] == next_generation and row['state'] in ('reserved', 'registered'):
                 return reply(request, {'batch_id': batch_id, 'consent_generation': row['generation'], 'version_number': row['version']})
             return reply(request, {'error': 'Reactivation operation has different or superseded consent'}, 409)
         if row['state'] != 'target_suppressed' or row['generation'] != expected:
@@ -483,9 +486,9 @@ def reactivate_external_version(request: Request):
         if row['run_id'] != run_id:
             number = allocated_version_ceiling(db, run_id) + 1
         db.execute('INSERT OR REPLACE INTO version_counters VALUES (?,?)', (run_id, max(number, allocated_version_ceiling(db, run_id))))
-        db.execute("UPDATE external_versions SET state='reserved',generation=?,run_id=?,version=? WHERE artifact_id=?", (expected + 1, run_id, number, row['artifact_id']))
+        db.execute("UPDATE external_versions SET state='reserved',generation=?,run_id=?,version=? WHERE artifact_id=?", (next_generation, run_id, number, row['artifact_id']))
         db.execute('INSERT INTO external_batches VALUES (?,?,?)', (batch_id, run_id, selection))
-    return reply(request, {'batch_id': batch_id, 'consent_generation': expected + 1, 'version_number': number}, 201)
+    return reply(request, {'batch_id': batch_id, 'consent_generation': next_generation, 'version_number': number}, 201)
 
 
 @app.post('/external/review/versions')
