@@ -175,6 +175,35 @@ class ExternalVersionTests(unittest.TestCase):
         self.assertEqual([item['state'] for item in json.loads(status.description)['versions']], ['target_suppressed', 'target_suppressed'])
         self.assertEqual(self.ingest().status_code, 409)
 
+    def test_source_deletion_removes_only_the_exact_external_version_and_is_terminal_after_restart(self):
+        other = {**self.payload, 'source_version_id': 'version-2', 'media_url': 'https://review.v1su4.dev/api/destination-media/selected-grant/version-2/original'}
+        self.assertEqual(self.reserve([self.payload, other], self.payload['batch_id']).status_code, 201)
+        with_grid = {**self.payload, 'grid': {'source_version_id': 'reference-grid', 'media_url': 'https://review.v1su4.dev/api/destination-media/selected-grant/reference-grid/original'}}
+        self.assertEqual(self.ingest(with_grid).status_code, 201)
+        other_artifact = json.loads(self.ingest(other).description)['artifact']
+        request = Mock(body=json.dumps({'source_asset_id': self.payload['source_asset_id'], 'source_version_id': 'version-1', 'consent_generation': 1}), headers={'authorization': 'Bearer test-ingest-only'})
+        with patch.object(app.httpx, 'Client') as storage:
+            self.assertEqual(app.delete_review_source_version(request).status_code, 200)
+            self.assertEqual(app.delete_review_source_version(request).status_code, 200)
+            storage.assert_not_called()
+        app.initialize()
+        public = app.get_document(Mock(headers={}, path_params={'run_id': self.run_id, 'file': 'artifacts.json'}))
+        self.assertEqual([item['artifact_id'] for item in json.loads(public.description)], [other_artifact['artifact_id']])
+        status = app.external_version_status(Mock(body=json.dumps({'versions': [self.payload]}), headers={'authorization': 'Bearer test-ingest-only'}))
+        self.assertEqual(json.loads(status.description)['versions'][0]['state'], 'source_deleted')
+        self.assertEqual(self.ingest().status_code, 409)
+        self.assertEqual(self.reserve([self.payload], 'deleted-retry-' + self.run_id).status_code, 409)
+        again = {**self.payload, 'batch_id': 'deleted-again-' + self.run_id, 'intent': 'sync-again', 'expected_generation': 1}
+        self.assertEqual(app.reactivate_external_version(Mock(body=json.dumps(again), headers={'authorization': 'Bearer test-ingest-only'})).status_code, 409)
+
+    def test_source_deletion_before_reservation_prevents_a_delayed_batch_from_recreating_it(self):
+        request = Mock(body=json.dumps({'source_asset_id': self.payload['source_asset_id'], 'source_version_id': 'version-1', 'consent_generation': 1}), headers={'authorization': 'Bearer test-ingest-only'})
+        self.assertEqual(app.delete_review_source_version(request).status_code, 200)
+        app.initialize()
+        self.assertEqual(self.reserve([self.payload], self.payload['batch_id']).status_code, 409)
+        status = app.external_version_status(Mock(body=json.dumps({'versions': [self.payload]}), headers={'authorization': 'Bearer test-ingest-only'}))
+        self.assertEqual(json.loads(status.description)['versions'][0]['state'], 'source_deleted')
+
     def test_explicit_exact_version_reactivation_advances_consent_and_rejects_old_delivery_or_removal(self):
         self.assertEqual(self.reserve([self.payload], self.payload['batch_id']).status_code, 201)
         artifact = json.loads(self.ingest().description)['artifact']

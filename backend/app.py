@@ -414,6 +414,37 @@ def external_version_status(request: Request):
     return reply(request, {'versions': result})
 
 
+@app.post('/external/review/source-deletions')
+def delete_review_source_version(request: Request):
+    denied = review_ingest_error(request)
+    if denied is not None:
+        return denied
+    try:
+        if len(request.body) > 4096:
+            raise ValueError()
+        payload = json.loads(request.body)
+        asset_id, version_id = (payload[field] for field in ('source_asset_id', 'source_version_id'))
+        generation = payload['consent_generation']
+        if any(not isinstance(value, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', value) for value in (asset_id, version_id)) or isinstance(generation, bool) or not isinstance(generation, int) or not 1 <= generation <= 2147483647:
+            raise ValueError()
+    except (ValueError, KeyError, TypeError, AttributeError):
+        return reply(request, {'error': 'Provide the exact deleted Review source version'}, 400)
+    with lock, connect() as db:
+        db.execute('BEGIN IMMEDIATE')
+        row = db.execute("SELECT * FROM external_versions WHERE source_app='review-room' AND source_asset_id=? AND source_version_id=?", (asset_id, version_id)).fetchone()
+        if not row:
+            artifact_id = 'review-' + hashlib.sha256(json.dumps(['review-room', asset_id, version_id]).encode()).hexdigest()[:32]
+            db.execute('INSERT INTO external_versions (source_app,source_asset_id,source_version_id,run_id,artifact_id,version,state,generation) VALUES (?,?,?,?,?,?,?,?)', ('review-room', asset_id, version_id, '', artifact_id, 0, 'source_deleted', generation))
+            return reply(request, {'source_asset_id': asset_id, 'source_version_id': version_id, 'consent_generation': generation, 'state': 'source_deleted'})
+        generation = max(generation, row['generation'])
+        db.execute("UPDATE external_versions SET state='source_deleted',generation=? WHERE artifact_id=?", (generation, row['artifact_id']))
+        artifacts = document(db, row['run_id'], 'artifacts')
+        if artifacts is not None:
+            kept = [item for item in artifacts if item['artifact_id'] != row['artifact_id'] and not (item.get('ownership') == 'external' and item.get('source_parent_artifact_id') == row['artifact_id'])]
+            db.execute('INSERT OR REPLACE INTO documents VALUES (?,?,?)', (row['run_id'], 'artifacts', json.dumps(kept)))
+    return reply(request, {'source_asset_id': asset_id, 'source_version_id': version_id, 'consent_generation': generation, 'state': 'source_deleted'})
+
+
 @app.post('/versions/:id/remove')
 def remove_external_version(request: Request):
     if not authorized(request):

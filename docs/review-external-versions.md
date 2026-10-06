@@ -14,7 +14,7 @@ SQLite persists the source tuple, target project, artifact identity and assigned
 
 Reserved slots survive restart and partial delivery: a later successful delivery cannot take the failed older item's number. Concurrent retries produce one artifact. Draft projects become ready for review after successful delivery. Image attachments retain parent/source provenance and external ownership. Registration retries preserve all target edits and existing attachments. Invalid metadata does not consume the reservation.
 
-Remaining required work: Review connection/selection UI and durable outbox; persistent target suppression and generation-aware reactivation; source-deletion delivery and fill-empty refresh; service-key provisioning; deployments and browser acceptance. Existing local uploads and unrelated checkout edits remain intact.
+Review connection/selection UI, durable outbox, target suppression and exact-version reactivation are implemented on stacked branches. Service provisioning, deployments and browser acceptance remain required; existing local uploads and unrelated checkout edits remain intact.
 
 ## Suppression and reactivation implementation
 
@@ -24,6 +24,12 @@ Server-side `POST /external/review/status` reports exact source states, target i
 
 `POST /external/review/reactivations` requires `intent: "sync-again"`, exact source identity/date, target `run_id`, a new immutable `batch_id`, and the current `expected_generation`. It reserves the next generation for that exact suppressed version; optional higher `consent_generation` aligns with a Review grant whose generation advanced during an earlier failed handoff. Normal version delivery then uses the new batch/generation and a fresh Review grant. The operation replay is idempotent. Reactivation preserves Vn in the same target; another explicitly selected target gets a new local Vn. Independent persistent version counters retain the old project's allocation history after a move. Local upload allocation shares that counter under an immediate transaction.
 
-Still required: source grant generation alignment, target remove UI, explicit replacement of a deleted folder connection, terminal source-delete transport, metadata refresh, service provisioning, deployments and live acceptance. This checkpoint is backend evidence only.
+The owner take-details UI confirms removal of the captured external artifact and consent generation, requires owner sign-in, and reloads the project after success. Takes sort by assigned target Vn, including an older source version published later. Review's explicit Sync again atomically rotates its grant and durably retries a separate reactivation operation before batch reservation; uncertain confirmations retain the same nonce, metadata revision and image preview.
+
+## Terminal source deletion
+
+Server-only `POST /external/review/source-deletions` accepts exact `source_asset_id`, `source_version_id` and `consent_generation`. It persists `source_deleted` before removing the corresponding root and its external image attachments, without storage or Review calls. Replays are idempotent, including after restart. Source deletion is terminal across consent generations: batch delivery, generic retry and explicit reactivation cannot recreate it. Deletion arriving before reservation creates a tombstone without allocating a target Vn; a delayed reservation is rejected.
+
+Still required: durable Review source-delete emission, deliberate removal of deleted linked references, unsync, fill-empty-only metadata refresh, explicit replacement of a deleted folder connection, service provisioning, deployments and live acceptance. Local checks prove implementation behavior, not deployed cross-app acceptance.
 
 Backend verification on Windows: `uv run --with robyn==0.88.0 --with httpx==0.28.1 python -X utf8 -m unittest discover -s backend`. UTF-8 mode is required for the existing catalog seed files.
