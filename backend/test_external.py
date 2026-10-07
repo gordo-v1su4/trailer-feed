@@ -60,6 +60,31 @@ class ExternalVersionTests(unittest.TestCase):
         self.assertEqual(json.loads(selected.description)['run_id'], run_id)
         self.assertEqual(self.connect({**identity, 'mode': 'connect', 'run_id': self.run_id}).status_code, 409)
 
+    def test_deleted_connection_replacement_requires_exact_intent_and_replays_without_recreating_old_target(self):
+        for mode in ('create', 'connect'):
+            identity = {'source_project_id': 'replace-' + mode + self.run_id, 'source_folder_id': 'folder-1'}
+            first = self.connect({**identity, 'mode': 'create', 'title': 'Old ' + mode + self.run_id})
+            old = json.loads(first.description)['run_id']
+            replacement = {**identity, 'mode': mode, 'expected_run_id': old, 'replacement_id': 'replacement-' + mode + self.run_id}
+            replacement.update({'title': 'New ' + mode + self.run_id} if mode == 'create' else {'run_id': self.run_id})
+            self.assertEqual(self.connect(replacement).status_code, 409)
+            with app.connect() as db:
+                db.execute('DELETE FROM documents WHERE run_id=?', (old,))
+                db.execute('INSERT INTO deleted_runs VALUES (?,?)', (old, '2026-10-07T04:30:00+00:00'))
+            self.assertEqual(self.connect({**identity, 'mode': 'create', 'title': 'Old ' + mode + self.run_id}).status_code, 409)
+            fresh = self.connect(replacement)
+            self.assertEqual(fresh.status_code, 201)
+            current = json.loads(fresh.description)['run_id']
+            self.assertNotEqual(current, old)
+            self.assertEqual(self.connect(replacement).status_code, 200)
+            self.assertEqual(json.loads(self.connect(replacement).description)['run_id'], current)
+            changed = {**replacement, **({'title': 'Changed intent ' + self.run_id} if mode == 'create' else {'run_id': old})}
+            self.assertEqual(self.connect(changed).status_code, 409)
+            with app.connect() as db:
+                self.assertIsNone(app.document(db, old, 'run'))
+                row = db.execute('SELECT * FROM external_connection_replacements WHERE replacement_id=?', (replacement['replacement_id'],)).fetchone()
+                self.assertEqual((row['old_run_id'], row['new_run_id']), (old, current))
+
     def test_reservation_keeps_oldest_first_when_later_delivery_succeeds_before_retry(self):
         oldest = {key: self.payload[key] for key in ('source_asset_id', 'source_version_id', 'source_created_at')}
         newer = {**oldest, 'source_version_id': 'version-2', 'source_created_at': '2026-10-02T10:00:00+00:00'}
@@ -266,6 +291,21 @@ class ExternalVersionTests(unittest.TestCase):
         self.assertEqual(app.refresh_review_metadata(request).status_code,200)
         public = app.get_document(Mock(headers={},path_params={'run_id':self.run_id,'file':'artifacts.json'}))
         self.assertEqual(next(item for item in json.loads(public.description) if item['artifact_id']==artifact['artifact_id'])['version_prompt'],'')
+
+    def test_partner_unsync_suppresses_and_replays_without_owner_or_source_deletion(self):
+        self.assertEqual(self.reserve([self.payload], self.payload['batch_id']).status_code, 201)
+        artifact = json.loads(self.ingest().description)['artifact']
+        payload = {'source_asset_id': self.payload['source_asset_id'], 'source_version_id': self.payload['source_version_id'], 'consent_generation': 1}
+        request = Mock(body=json.dumps(payload), headers={'authorization': 'Bearer test-ingest-only'})
+        result = app.unsync_review_version(request)
+        self.assertEqual(result.status_code, 200)
+        self.assertEqual(json.loads(result.description)['state'], 'target_suppressed')
+        self.assertEqual(app.unsync_review_version(request).status_code, 200)
+        self.assertEqual(self.ingest().status_code, 409)
+        self.assertEqual(json.loads(app.get_document(Mock(headers={}, path_params={'run_id': self.run_id, 'file': 'artifacts.json'})).description), [])
+        again = {**self.payload, 'batch_id': 'after-unsync-' + self.run_id, 'intent': 'sync-again', 'expected_generation': 1, 'consent_generation': 2}
+        self.assertEqual(app.reactivate_external_version(Mock(body=json.dumps(again), headers={'authorization': 'Bearer test-ingest-only'})).status_code, 201)
+        self.assertEqual(app.unsync_review_version(request).status_code, 409)
 
     def test_metadata_refresh_preserves_populated_images_and_never_reactivates_suppression(self):
         self.assertEqual(self.reserve([self.payload],self.payload['batch_id']).status_code,201)

@@ -56,6 +56,7 @@ def initialize():
         CREATE TABLE IF NOT EXISTS external_batches (batch_id TEXT PRIMARY KEY, run_id TEXT NOT NULL, selection TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS external_refreshes (operation_id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, receipt TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS external_connections (source_project_id TEXT NOT NULL, source_folder_id TEXT NOT NULL, run_id TEXT NOT NULL, PRIMARY KEY(source_project_id,source_folder_id));
+        CREATE TABLE IF NOT EXISTS external_connection_replacements (replacement_id TEXT PRIMARY KEY, source_project_id TEXT NOT NULL, source_folder_id TEXT NOT NULL, old_run_id TEXT NOT NULL, new_run_id TEXT NOT NULL, intent TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS version_counters (run_id TEXT PRIMARY KEY, last_version INTEGER NOT NULL);
         PRAGMA user_version=3;
         ''')
@@ -244,11 +245,15 @@ def connect_review_project(request: Request):
         if any(not isinstance(value, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', value) for value in (project_id, folder_id)):
             raise ValueError()
         mode = payload['mode']
+        expected_run_id, replacement_id = payload.get('expected_run_id'), payload.get('replacement_id')
+        replacement = expected_run_id is not None or replacement_id is not None
+        if replacement and any(not isinstance(value, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', value) for value in (expected_run_id, replacement_id)):
+            raise ValueError()
         if mode == 'create':
             title = payload['title']
             if not isinstance(title, str) or not 1 <= len(title.strip()) <= 120:
                 raise ValueError()
-            target_id = 'review-' + hashlib.sha256(json.dumps([project_id, folder_id]).encode()).hexdigest()[:32]
+            target_id = 'review-' + hashlib.sha256(json.dumps([project_id, folder_id] + ([replacement_id] if replacement else [])).encode()).hexdigest()[:32]
         elif mode == 'connect':
             target_id = payload['run_id']
             if not isinstance(target_id, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', target_id):
@@ -260,7 +265,18 @@ def connect_review_project(request: Request):
     with lock, connect() as db:
         db.execute('BEGIN IMMEDIATE')
         existing = db.execute('SELECT * FROM external_connections WHERE source_project_id=? AND source_folder_id=?', (project_id, folder_id)).fetchone()
-        if existing:
+        intent = json.dumps({'mode': mode, 'target': title.strip() if mode == 'create' else target_id}, sort_keys=True)
+        if replacement:
+            receipt = db.execute('SELECT * FROM external_connection_replacements WHERE replacement_id=?', (replacement_id,)).fetchone()
+            if receipt:
+                if receipt['source_project_id'] != project_id or receipt['source_folder_id'] != folder_id or receipt['old_run_id'] != expected_run_id or receipt['intent'] != intent or not existing or existing['run_id'] != receipt['new_run_id'] or not document(db, receipt['new_run_id'], 'run'):
+                    return reply(request, {'error': 'Replacement consent changed or was superseded'}, 409)
+                return reply(request, {'source_project_id': project_id, 'source_folder_id': folder_id, 'run_id': receipt['new_run_id']})
+            if not existing or existing['run_id'] != expected_run_id or document(db, expected_run_id, 'run') or not db.execute('SELECT 1 FROM deleted_runs WHERE run_id=?', (expected_run_id,)).fetchone():
+                return reply(request, {'error': 'Exact connected target must be deleted before replacement'}, 409)
+            if target_id == expected_run_id:
+                return reply(request, {'error': 'Choose a different target project'}, 409)
+        elif existing:
             if mode == 'connect' and existing['run_id'] != target_id:
                 return reply(request, {'error': 'Source folder already has another target connection'}, 409)
             if not document(db, existing['run_id'], 'run'):
@@ -278,7 +294,11 @@ def connect_review_project(request: Request):
                 db.execute('INSERT INTO documents VALUES (?,?,?)', (target_id, kind, json.dumps(value)))
         elif not document(db, target_id, 'run'):
             return reply(request, {'error': 'Selected target project not found'}, 404)
-        db.execute('INSERT INTO external_connections VALUES (?,?,?)', (project_id, folder_id, target_id))
+        if replacement:
+            db.execute('INSERT INTO external_connection_replacements VALUES (?,?,?,?,?,?)', (replacement_id, project_id, folder_id, expected_run_id, target_id, intent))
+            db.execute('UPDATE external_connections SET run_id=? WHERE source_project_id=? AND source_folder_id=?', (target_id, project_id, folder_id))
+        else:
+            db.execute('INSERT INTO external_connections VALUES (?,?,?)', (project_id, folder_id, target_id))
     return reply(request, {'source_project_id': project_id, 'source_folder_id': folder_id, 'run_id': target_id}, 201)
 
 
@@ -1111,6 +1131,41 @@ def worker():
         except Exception:
             print('Upload reconciliation failed; will retry',flush=True)
         time.sleep(5)
+
+
+@app.post('/external/review/unsyncs')
+def unsync_review_version(request: Request):
+    denied = review_ingest_error(request)
+    if denied is not None:
+        return denied
+    try:
+        if len(request.body) > 4096:
+            raise ValueError()
+        payload = json.loads(request.body)
+        asset_id, version_id = payload['source_asset_id'], payload['source_version_id']
+        generation = payload['consent_generation']
+        if any(not isinstance(value, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', value) for value in (asset_id, version_id)) or isinstance(generation, bool) or not isinstance(generation, int) or not 1 <= generation <= 2147483647:
+            raise ValueError()
+    except (ValueError, KeyError, TypeError):
+        return reply(request, {'error': 'Confirm exact source-version Unsync'}, 400)
+    with lock, connect() as db:
+        db.execute('BEGIN IMMEDIATE')
+        row = db.execute("SELECT * FROM external_versions WHERE source_app='review-room' AND source_asset_id=? AND source_version_id=?", (asset_id, version_id)).fetchone()
+        if row and row['generation'] != generation:
+            return reply(request, {'error': 'Unsync generation changed'}, 409)
+        if not row:
+            identity = hashlib.sha256(json.dumps(['review-room', asset_id, version_id]).encode()).hexdigest()[:32]
+            # A pre-reservation marker neither consumes a real target number nor collides with another marker.
+            db.execute('INSERT INTO external_versions (source_app,source_asset_id,source_version_id,run_id,artifact_id,version,state,generation) VALUES (?,?,?,?,?,?,?,?)', ('review-room', asset_id, version_id, 'unsync-' + identity, 'review-' + identity, 0, 'target_suppressed', generation))
+            state = 'target_suppressed'
+        else:
+            state = 'source_deleted' if row['state'] == 'source_deleted' else 'target_suppressed'
+            db.execute('UPDATE external_versions SET state=? WHERE artifact_id=?', (state, row['artifact_id']))
+            artifacts = document(db, row['run_id'], 'artifacts')
+            if artifacts is not None:
+                remaining = [item for item in artifacts if item['artifact_id'] != row['artifact_id'] and item.get('source_parent_artifact_id') != row['artifact_id']]
+                db.execute("UPDATE documents SET value=? WHERE run_id=? AND kind='artifacts'", (json.dumps(remaining), row['run_id']))
+    return reply(request, {'source_asset_id': asset_id, 'source_version_id': version_id, 'consent_generation': generation, 'state': state})
 
 
 if __name__=='__main__':
