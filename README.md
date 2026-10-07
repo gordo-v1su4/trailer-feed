@@ -2,6 +2,8 @@
 
 A video portfolio for importing finished projects, watching versions, comparing takes, and keeping prompts and model metadata alongside the videos.
 
+![Trailer Feed Neon Afterlife versions](docs/images/trailer-feed-workspace.png)
+
 - Website: https://www.trailerfeed.video
 - Catalog API: https://media.v1su4.dev/trailer-feed
 - Repository: https://github.com/gordo-v1su4/trailer-feed
