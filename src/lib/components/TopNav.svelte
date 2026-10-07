@@ -64,9 +64,10 @@
   .nav-bar {
     display: flex;
     align-items: center;
-    gap: clamp(8px, 2vw, 24px);
+    gap: clamp(16px, 3vw, 48px);
     height: var(--dc-nav-height);
     max-width: var(--dc-page-max);
+    box-sizing: content-box;
     margin: 0 auto;
     padding-inline: max(var(--dc-gutter-x), var(--dc-safe-l)) max(var(--dc-gutter-x), var(--dc-safe-r));
   }
@@ -87,7 +88,7 @@
     display: flex;
     min-width: 0;
     align-items: center;
-    gap: 2px;
+    gap: clamp(4px, 1vw, 16px);
     overflow-x: auto;
     scrollbar-width: none;
   }
