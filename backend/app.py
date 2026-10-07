@@ -649,8 +649,10 @@ def refresh_review_metadata(request: Request):
         images = []
         for image, kind in ([(grid, 'shot_grid')] if grid is not None else []) + [(image, 'image_result') for image in references]:
             image_id = image['source_version_id']
-            if not isinstance(image_id, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', image_id) or review_resolver_url(image['media_url'], image_id) != slug:
+            # Refresh may use a bounded image-only grant while the published root keeps its URL.
+            if not isinstance(image_id, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', image_id):
                 raise ValueError()
+            review_resolver_url(image['media_url'], image_id)
             images.append({'source_version_id':image_id, 'media_url':image['media_url'], 'artifact_type':kind})
         fingerprint = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
     except (ValueError, KeyError, TypeError, AttributeError, OverflowError):

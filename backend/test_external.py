@@ -241,7 +241,7 @@ class ExternalVersionTests(unittest.TestCase):
         self.assertEqual(self.reserve([self.payload],self.payload['batch_id']).status_code,201)
         original = {**self.payload,'metadata':{'model':'Target model','prompt':'','notes':'Keep notes','customFields':[{'id':'flag','label':'Flag','kind':'boolean','value':False},{'id':'zero','label':'Zero','kind':'number','value':0}]}}
         artifact = json.loads(self.ingest(original).description)['artifact']
-        grid = {'source_version_id':'refresh-grid-' + self.run_id,'media_url':f'https://review.v1su4.dev/api/destination-media/selected-grant/refresh-grid-{self.run_id}/original'}
+        grid = {'source_version_id':'refresh-grid-' + self.run_id,'media_url':f'https://review.v1su4.dev/api/destination-media/refresh-image-grant/refresh-grid-{self.run_id}/original'}
         candidate = {**self.payload,'operation_id':'refresh-' + self.run_id,'intent':'refresh-empty','grid':grid,'metadata':{'model':'Source model','prompt':'Filled prompt','notes':'New notes','customFields':[{'id':'flag','label':'Flag','kind':'boolean','value':True},{'id':'zero','label':'Zero','kind':'number','value':9},{'id':'look','label':'Look','kind':'text','value':'Moonlight'}]}}
         request = Mock(body=json.dumps(candidate),headers={'authorization':'Bearer test-ingest-only'})
         self.assertEqual(app.refresh_review_metadata(request).status_code,200)
