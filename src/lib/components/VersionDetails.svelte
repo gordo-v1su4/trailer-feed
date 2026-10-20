@@ -114,7 +114,7 @@
   .context-grid {display:grid;grid-template-columns:1fr 1fr;gap:24px;}
   .context-grid > div {min-width:0;}
   .prompt {box-sizing:border-box;white-space:pre-wrap;overflow-wrap:anywhere;margin:0;height:330px;overflow:auto;padding:0 14px 0 0;border:0;border-radius:0;background:transparent;color:#d6d3d1;font:14px/1.65 var(--dc-font-sans);scrollbar-width:thin;scrollbar-color:#3f3f46 transparent;}
-  img {width:100%;aspect-ratio:16/9;object-fit:contain;object-position:top;background:var(--dc-bg);display:block;}
+  img {width:100%;aspect-ratio:16/9;object-fit:cover;object-position:center;background:var(--dc-bg);display:block;}
   .empty {height:330px;margin:0;}
   .save-status {min-height:20px;margin:8px 0 0;font-size:12px;color:var(--dc-text-muted);}
   .editor-dialog {margin:auto;inset:0;box-sizing:border-box;max-width:calc(100vw - 24px);width:min(680px,calc(100vw - 40px));padding:0;border:0;border-radius:10px;background:transparent;color:var(--dc-text);max-height:calc(100dvh - 40px);}
