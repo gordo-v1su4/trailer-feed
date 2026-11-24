@@ -403,6 +403,24 @@ class ExternalVersionTests(unittest.TestCase):
         public = app.get_document(Mock(headers={}, path_params={'run_id': self.run_id, 'file': 'artifacts.json'}))
         self.assertEqual(json.loads(public.description), [])
 
+    def test_index_preview_uses_featured_take(self):
+        oldest = {key: self.payload[key] for key in ('source_asset_id', 'source_version_id', 'source_created_at')}
+        newer = {**oldest, 'source_version_id': 'version-2', 'source_created_at': '2026-10-02T10:00:00+00:00'}
+        batch_id = 'batch-hero-' + self.run_id
+        self.assertEqual(self.reserve([oldest, newer], batch_id).status_code, 201)
+        self.assertEqual(self.ingest({**self.payload, **oldest, 'batch_id': batch_id}).status_code, 201)
+        second = {**self.payload, **newer, 'batch_id': batch_id, 'media_url': 'https://review.v1su4.dev/api/destination-media/selected-grant/version-2/original'}
+        self.assertEqual(self.ingest(second).status_code, 201)
+        with app.connect() as db:
+            artifacts = app.document(db, self.run_id, 'artifacts')
+            hero = next(item for item in artifacts if item.get('source_version_id') == 'version-1')
+            app.apply_hero_take(db, self.run_id, hero['artifact_id'])
+        index = app.index(Mock(headers={}))
+        runs = json.loads(index.description)['runs']
+        row = next((item for item in runs if item.get('run_id') == self.run_id), None)
+        self.assertIsNotNone(row)
+        self.assertEqual(row['preview']['artifact_id'], hero['artifact_id'])
+
 
 if __name__ == '__main__':
     unittest.main()

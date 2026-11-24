@@ -82,6 +82,46 @@ def initialize():
                     db.execute('INSERT OR IGNORE INTO documents VALUES (?,?,?)', (folder.name, kind, path.read_text()))
 
 
+def playable_video(artifact):
+    return artifact.get('media_url') and artifact.get('artifact_type') in ('video_result', 'end_video', 'video')
+
+
+def preview_artifact(run, artifacts):
+    featured_id = run.get('featured_artifact_id')
+    if isinstance(featured_id, str) and featured_id:
+        match = next((item for item in artifacts if item.get('artifact_id') == featured_id and playable_video(item)), None)
+        if match:
+            return match
+    selected = [item for item in artifacts if item.get('status') == 'selected' and playable_video(item)]
+    if len(selected) == 1:
+        return selected[0]
+    ready = [item for item in artifacts if playable_video(item)]
+    return sorted(ready, key=lambda item: item.get('created_at', ''))[-1] if ready else None
+
+
+def apply_hero_take(db, run_id, artifact_id):
+    run = document(db, run_id, 'run')
+    if run is None:
+        raise ValueError('run')
+    artifacts = document(db, run_id, 'artifacts') or []
+    if artifact_id is not None:
+        if not any(item.get('artifact_id') == artifact_id and playable_video(item) for item in artifacts):
+            raise ValueError('artifact')
+    if artifact_id:
+        run['featured_artifact_id'] = artifact_id
+    else:
+        run.pop('featured_artifact_id', None)
+    for item in artifacts:
+        if not playable_video(item):
+            continue
+        if artifact_id and item.get('artifact_id') == artifact_id:
+            item['status'] = 'selected'
+        elif item.get('status') == 'selected':
+            item['status'] = 'generated'
+    db.execute("UPDATE documents SET value=? WHERE run_id=? AND kind='run'", (json.dumps(run), run_id))
+    db.execute("UPDATE documents SET value=? WHERE run_id=? AND kind='artifacts'", (json.dumps(artifacts), run_id))
+
+
 def document(db, run_id, kind):
     row = db.execute('SELECT value FROM documents WHERE run_id=? AND kind=?', (run_id, kind)).fetchone()
     return json.loads(row['value']) if row else None
@@ -191,8 +231,7 @@ def index(request: Request):
         for row in db.execute("SELECT run_id,value FROM documents WHERE kind='run'"):
             run = json.loads(row['value'])
             artifacts = document(db, row['run_id'], 'artifacts') or []
-            ready = [a for a in artifacts if a.get('media_url')]
-            preview = sorted(ready, key=lambda a:a.get('created_at',''))[-1] if ready else None
+            preview = preview_artifact(run, artifacts)
             runs.append({**run, 'preview': preview, 'artifact_count': len(artifacts), 'answer_count': len(document(db,row['run_id'],'answers') or []), 'model_labels': run.get('models_requested',[])})
     return reply(request, {'runs': runs, 'expected_models': []})
 
@@ -641,6 +680,11 @@ def register_external_version(request: Request):
         if run.get('status') == 'draft':
             run['status'] = 'ready_for_review'
             db.execute("UPDATE documents SET value=? WHERE run_id=? AND kind='run'", (json.dumps(run), run_id))
+        if payload.get('featured') or payload.get('is_current'):
+            try:
+                apply_hero_take(db, run_id, artifact_id)
+            except ValueError:
+                pass
     return reply(request, {'artifact': artifact, 'existing': False}, 201)
 
 
@@ -978,6 +1022,30 @@ def delete_project_thumbnail_object(key):
         response.raise_for_status()
         if response.json().get('failed') or response.json().get('deleted') != 1:
             raise ValueError('Thumbnail cleanup incomplete')
+
+
+@app.post('/runs/:run_id/featured')
+def set_featured_take(request: Request):
+    """Choose which take is the portfolio hero for Home and index preview."""
+    if not authorized(request):
+        return reply(request, {'error': 'Sign in to edit this project'}, 401)
+    run_id = request.path_params['run_id']
+    try:
+        payload = json.loads(request.body or '{}')
+        artifact_id = payload.get('artifact_id')
+        if artifact_id is not None and (not isinstance(artifact_id, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', artifact_id)):
+            raise ValueError()
+    except (ValueError, TypeError, json.JSONDecodeError):
+        return reply(request, {'error': 'Provide artifact_id as a string or null'}, 400)
+    with lock, connect() as db:
+        try:
+            apply_hero_take(db, run_id, artifact_id)
+        except ValueError as error:
+            if str(error) == 'run':
+                return reply(request, {'error': 'Project not found'}, 404)
+            return reply(request, {'error': 'Take not found in this project'}, 404)
+        run = document(db, run_id, 'run')
+    return reply(request, {'featured_artifact_id': run.get('featured_artifact_id')})
 
 
 @app.post('/runs/:run_id/thumbnail')

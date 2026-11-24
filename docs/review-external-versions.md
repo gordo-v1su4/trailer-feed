@@ -40,4 +40,10 @@ Only empty target fields are filled. Populated model, prompt, notes, grid and re
 
 Still required: Review-side refresh consent/transport/UI, unsync, explicit replacement of a deleted folder connection, service provisioning, deployments and live acceptance. Local checks prove implementation behavior, not deployed cross-app acceptance.
 
+## Portfolio hero take
+
+`featured_artifact_id` on the run document chooses which playable take appears on the public Home hero and in `comparisons.index.json` preview. Owner `POST /runs/<run_id>/featured` with `{"artifact_id": "<id>"}` or `{"artifact_id": null}` sets or clears it; the take gets `status: "selected"` while it is hero.
+
+Review ingestion may set the hero on delivery with `"featured": true` or `"is_current": true` on `POST /external/review/versions` (intended for Review Room Make current / pick sync). Without hero metadata, preview falls back to a single `selected` video, then the newest playable take.
+
 Backend verification on Windows: `uv run --with robyn==0.88.0 --with httpx==0.28.1 python -X utf8 -m unittest discover -s backend`. UTF-8 mode is required for the existing catalog seed files.

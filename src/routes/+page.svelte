@@ -6,7 +6,10 @@
   import ClipCard from '$lib/components/ClipCard.svelte';
   import ProjectCard from '$lib/components/ProjectCard.svelte';
   import Icon from '$lib/components/Icon.svelte';
-  import { studio, type Take } from '$lib/ui/studio.svelte';
+  import PrototypeSwitcher from '$lib/components/PrototypeSwitcher.svelte';
+  import { page } from '$app/state';
+  import { hrefWithVariant, readVariant } from '$lib/ui/prototype-variant';
+  import { featuredCoverArtifact, featuredTake, portfolioStatusVisible, studio, type Take } from '$lib/ui/studio.svelte';
   import { toneFor } from '$lib/ui/tones';
   import { showTitle } from '$lib/data/titles';
   import type { ComparisonArtifact } from '$lib/types/comparison';
@@ -20,8 +23,9 @@
 
   const projects = $derived(studio.projects);
   const featured = $derived(projects[heroIndex] ?? projects[0]);
-  const heroTake = $derived(featured?.takes.at(-1));
+  const heroTake = $derived(featured ? featuredTake(featured) : undefined);
   const latest = $derived(studio.takes.slice(0, 8));
+  const variant = $derived(readVariant(page.url.searchParams));
 
   function pad(n: number) {
     return String(n).padStart(2, '0');
@@ -97,7 +101,7 @@
   <MediaLightbox artifacts={lightboxArtifacts} activeIndex={lightboxIndex} showDetails={false} onClose={() => (lightboxArtifacts = null)} />
 {/if}
 
-<div class="home">
+<div class="home" data-variant={variant}>
   {#if !studio.loaded}
     <div class="studio-column state"><Icon name="loader" size={16} /> Opening the screening room…</div>
   {:else if !featured}
@@ -108,7 +112,7 @@
     </div>
   {:else}
     <!-- Now playing: the video runs edge to edge, under the glass nav. -->
-    <section class="hero" aria-label="Now playing">
+    <section class="hero" class:hero-b={variant === 'B'} class:hero-c={variant === 'C'} aria-label="Now playing">
       <div class="screen">
         {#if heroTake}
           {#key heroTake.id}
@@ -130,41 +134,66 @@
         <div class="screen-scrim" aria-hidden="true"></div>
       </div>
 
-      <div class="hero-overlay studio-column">
+      <div class="hero-overlay studio-column" class:overlay-c={variant === 'C'}>
         {#key featured.runId}
-          <div class="title-card glass-panel" in:fade={{ duration: 300 }}>
-            <div class="tags">
-              <span class="stag tone-{toneFor(featured.status)}">{featured.status}</span>
+          <div class="title-card" class:glass-panel={variant !== 'C'} class:editorial-card={variant === 'C'} in:fade={{ duration: 300 }}>
+            {#if variant !== 'C'}
+              <div class="tags">
+                {#if portfolioStatusVisible(featured.status)}
+                  <span class="stag tone-{toneFor(featured.status)}">{featured.status}</span>
+                {/if}
+                {#if heroTake}
+                  <span class="stag tone-{toneFor(heroTake.model || heroTake.writer)}">
+                    {heroTake.code}{heroTake.writer ? ` · ${heroTake.writer}` : ''}{#if heroTake.model} · <LegacyText text={heroTake.model} />{/if}
+                  </span>
+                {/if}
+              </div>
+            {:else if heroTake?.model}
+              <p class="editorial-kicker"><LegacyText text={heroTake.model} /> · {heroTake.code}</p>
+            {/if}
+            <h1 class="t-page" class:editorial-title={variant === 'C'} title={featured.fullTitle}><LegacyText text={featured.title} /></h1>
+            {#if variant !== 'C'}
+              <p class="logline"><LegacyText text={featured.logline} /></p>
+            {:else}
+              <p class="logline editorial-logline"><LegacyText text={featured.logline} /></p>
+            {/if}
+            {#if variant === 'A' && featured.takes.length > 1}
+              <nav class="take-pills" aria-label="Takes for this project">
+                {#each featured.takes as t (t.id)}
+                  <a
+                    class="take-pill"
+                    class:active={t.id === heroTake?.id}
+                    href={takeHref(t)}
+                    aria-current={t.id === heroTake?.id ? 'true' : undefined}
+                  >{t.code}</a>
+                {/each}
+              </nav>
+            {/if}
+            <div class="actions" class:actions-c={variant === 'C'}>
               {#if heroTake}
-                <span class="stag tone-{toneFor(heroTake.model || heroTake.writer)}">
-                  {heroTake.code}{heroTake.writer ? ` · ${heroTake.writer}` : ''}{#if heroTake.model} · <LegacyText text={heroTake.model} />{/if}
-                </span>
-              {/if}
-            </div>
-            <h1 class="t-page" title={featured.fullTitle}><LegacyText text={featured.title} /></h1>
-            <p class="logline"><LegacyText text={featured.logline} /></p>
-            <div class="actions">
-              {#if heroTake}
-                <a class="sbtn sbtn-primary" href={takeHref(heroTake)}>
-                  <Icon name="play" size={12} filled /> Review {heroTake.code}
+                <a class="sbtn sbtn-primary" class:editorial-cta={variant === 'C'} href={hrefWithVariant(takeHref(heroTake), page.url.searchParams)}>
+                  <Icon name="play" size={12} filled />
+                  Watch {heroTake.code}
                 </a>
               {/if}
-              <a class="sbtn" href={`/comparisons?run=${featured.runId}`}>
-                <span class="wide-only">Compare all takes</span><span class="narrow-only">All takes</span> ({featured.takes.length}) <Icon name="up-right" />
-              </a>
-              {#if heroTake}
-                <button type="button" class="sbtn sbtn-icon" onclick={togglePlay} aria-label={heroPlaying ? 'Pause hero video' : 'Play hero video'}>
-                  <Icon name={heroPlaying ? 'pause' : 'play'} filled={!heroPlaying} />
-                </button>
-                <button type="button" class="sbtn sbtn-icon" onclick={() => (heroMuted = !heroMuted)} aria-label={heroMuted ? 'Turn sound on' : 'Turn sound off'} aria-pressed={!heroMuted}>
-                  <Icon name={heroMuted ? 'mute' : 'volume'} />
-                </button>
+              {#if variant !== 'C'}
+                <a class="sbtn" href={hrefWithVariant(`/comparisons?run=${featured.runId}`, page.url.searchParams)}>
+                  <span class="wide-only">Compare all takes</span><span class="narrow-only">All takes</span> ({featured.takes.length}) <Icon name="up-right" />
+                </a>
+                {#if heroTake}
+                  <button type="button" class="sbtn sbtn-icon" onclick={togglePlay} aria-label={heroPlaying ? 'Pause hero video' : 'Play hero video'}>
+                    <Icon name={heroPlaying ? 'pause' : 'play'} filled={!heroPlaying} />
+                  </button>
+                  <button type="button" class="sbtn sbtn-icon" onclick={() => (heroMuted = !heroMuted)} aria-label={heroMuted ? 'Turn sound on' : 'Turn sound off'} aria-pressed={!heroMuted}>
+                    <Icon name={heroMuted ? 'mute' : 'volume'} />
+                  </button>
+                {/if}
               {/if}
             </div>
           </div>
         {/key}
 
-        {#if projects.length > 1}
+        {#if projects.length > 1 && variant !== 'C'}
           <div class="switcher">
             <span class="dim counter">{pad(heroIndex + 1)} / {pad(projects.length)}</span>
             <button type="button" class="sbtn sbtn-icon glassy" onclick={() => move(-1)} aria-label="Previous featured project">
@@ -178,8 +207,8 @@
       </div>
     </section>
 
-    <div class="studio-column rows">
-      {#if latest.length}
+    <div class="studio-column rows" class:rows-b={variant === 'B'} class:rows-c={variant === 'C'}>
+      {#if latest.length && variant === 'A'}
         <section aria-labelledby="latest-title">
           <div class="row-head">
             <div class="row-title">
@@ -215,18 +244,18 @@
             <h2 id="projects-title" class="t-section">Projects</h2>
             <span class="dim row-note">{projects.length} in the library</span>
           </div>
-          <a class="sbtn" href="/comparisons">Open review bay <Icon name="up-right" /></a>
+          <a class="sbtn" href={hrefWithVariant('/comparisons', page.url.searchParams)}>All projects <Icon name="up-right" /></a>
         </div>
-        <div class="grid-posters">
+        <div class="grid-posters" class:poster-strip={variant === 'B' || variant === 'C'}>
           {#each projects as project, i (project.runId)}
             <ProjectCard
               title={project.title}
               fullTitle={project.fullTitle}
-              cover={project.takes.at(-1)?.artifact ?? project.shotGrids[0]}
-              status={project.status}
+              cover={featuredCoverArtifact(project)}
+              status={portfolioStatusVisible(project.status) ? project.status : ''}
               takeCount={project.takes.length}
               selected={i === heroIndex}
-              onselect={() => goto(`/comparisons?run=${project.runId}`)}
+              onselect={() => goto(hrefWithVariant(`/comparisons?run=${project.runId}`, page.url.searchParams))}
             />
           {/each}
         </div>
@@ -235,9 +264,145 @@
   {/if}
 </div>
 
+<PrototypeSwitcher />
+
 <style>
   .home {
     padding-bottom: clamp(48px, 6vw, 88px);
+  }
+
+  .take-pills {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 12px;
+  }
+
+  .take-pill {
+    height: 26px;
+    padding: 0 10px;
+    border-radius: 999px;
+    border: 1px solid #333;
+    background: #121212;
+    color: var(--dc-text-muted);
+    font-size: 12px;
+    font-weight: 600;
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+  }
+
+  .take-pill.active {
+    border-color: #666;
+    background: #2a2a2a;
+    color: var(--dc-text);
+  }
+
+  .hero-b {
+    display: grid;
+    gap: 16px;
+  }
+
+  @media (min-width: 900px) {
+    .hero-b {
+      grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.85fr);
+      align-items: stretch;
+    }
+
+    .hero-b .screen {
+      max-height: none;
+      min-height: min(56vh, 640px);
+    }
+
+    .hero-b .hero-overlay {
+      position: static;
+      margin-top: 0;
+      justify-content: center;
+    }
+
+    .hero-b .title-card {
+      width: 100%;
+    }
+  }
+
+  .hero-c {
+    position: relative;
+  }
+
+  .hero-c .screen {
+    max-height: min(88vh, 900px);
+  }
+
+  .hero-c .screen-scrim {
+    background:
+      linear-gradient(to top, #000 0%, rgba(0, 0, 0, 0.15) 40%, rgba(0, 0, 0, 0) 70%),
+      linear-gradient(to bottom, rgba(0, 0, 0, 0.35) 0%, rgba(0, 0, 0, 0) 22%);
+  }
+
+  .overlay-c {
+    position: absolute;
+    inset: auto 0 0 0;
+    padding: 0 clamp(16px, 4vw, 32px) clamp(20px, 4vw, 40px);
+    pointer-events: none;
+  }
+
+  .overlay-c .title-card,
+  .overlay-c .actions {
+    pointer-events: auto;
+  }
+
+  .editorial-card {
+    max-width: 720px;
+    padding: 0;
+    background: transparent;
+  }
+
+  .editorial-kicker {
+    margin: 0 0 8px;
+    color: rgba(255, 255, 255, 0.75);
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+
+  .editorial-title {
+    font-size: clamp(2rem, 5vw, 3.25rem);
+    line-height: 1.05;
+    text-shadow: 0 2px 24px rgba(0, 0, 0, 0.8);
+  }
+
+  .editorial-logline {
+    max-width: 42ch;
+    color: rgba(255, 255, 255, 0.72);
+    text-shadow: 0 1px 12px rgba(0, 0, 0, 0.85);
+  }
+
+  .actions-c {
+    margin-top: 20px;
+  }
+
+  .editorial-cta {
+    padding-inline: 18px;
+    font-size: 15px;
+  }
+
+  .rows-b,
+  .rows-c {
+    margin-top: 20px;
+  }
+
+  .poster-strip {
+    display: flex;
+    gap: 12px;
+    overflow-x: auto;
+    scroll-snap-type: x mandatory;
+    padding-bottom: 4px;
+    scrollbar-width: thin;
+  }
+
+  .poster-strip :global(.poster) {
+    flex: 0 0 min(280px, 72vw);
+    scroll-snap-align: start;
   }
 
   .state {

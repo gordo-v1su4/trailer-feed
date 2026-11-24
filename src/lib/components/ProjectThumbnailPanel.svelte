@@ -2,7 +2,7 @@
   import ArtifactPreview from './ArtifactPreview.svelte';
   import { uploadProjectThumbnail, removeProjectThumbnail } from '$lib/data/project-thumbnail';
   import { signInOwner, SignInRequired } from '$lib/data/titles';
-  import type { Project } from '$lib/ui/studio.svelte';
+  import { featuredCoverArtifact, type Project } from '$lib/ui/studio.svelte';
 
   let { project, onSaved }: { project: Project; onSaved: () => void | Promise<void> } = $props();
   let file = $state<File | null>(null);
@@ -14,7 +14,8 @@
   let password = $state('');
   let pending = $state<'upload' | 'reset'>('upload');
   let picker: HTMLInputElement;
-  const fallback = $derived(project.takes.at(-1)?.artifact ?? project.shotGrids[0]);
+
+  const fallback = $derived(featuredCoverArtifact(project));
 
   $effect(() => {
     if (!file) { previewUrl = null; return; }

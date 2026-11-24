@@ -47,6 +47,37 @@ export function statusLabel(status: string | undefined) {
   return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
+/** Omit review-workflow labels on public portfolio surfaces. */
+export function portfolioStatusVisible(status: string | undefined) {
+  const raw = (status ?? '').replace(/_/g, ' ').trim().toLowerCase();
+  return raw !== 'ready for review' && raw !== 'ready_for_review';
+}
+
+/** Hero take for Home, posters, and default project open. */
+export function featuredTake(project: Project | undefined): Take | undefined {
+  if (!project?.takes.length) return undefined;
+  const { takes, summary, detail } = project;
+  const featuredId = detail.featured_artifact_id ?? summary.featured_artifact_id;
+  if (featuredId) {
+    const match = takes.find((take) => take.id === featuredId);
+    if (match) return match;
+  }
+  const selected = takes.filter((take) => take.selected);
+  if (selected.length === 1) return selected[0];
+  const previewId = summary.preview?.artifact_id;
+  if (previewId) {
+    const fromIndex = takes.find((take) => take.id === previewId);
+    if (fromIndex) return fromIndex;
+  }
+  return takes.at(-1);
+}
+
+export function featuredCoverArtifact(project: Project | undefined) {
+  const take = featuredTake(project);
+  if (take) return take.artifact;
+  return project?.shotGrids[0];
+}
+
 export function modelLabel(artifact: ComparisonArtifact) {
   const model = videoModel(artifact);
   if (model !== 'Model not set') return model;

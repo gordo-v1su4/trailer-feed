@@ -30,6 +30,8 @@ export interface ComparisonRun {
   tags?: string[];
   project_thumbnail_url?: string;
   project_thumbnail_object_key?: string;
+  /** Portfolio hero take; overrides newest-take default on Home and in the index preview. */
+  featured_artifact_id?: string;
 }
 
 export interface CreativeConceptPackage {
@@ -235,6 +237,8 @@ export interface ComparisonRunDetail extends ComparisonRun {
 export interface ComparisonRunSummary {
   logline?: string;
   project_thumbnail_url?: string;
+  featured_artifact_id?: string;
+  preview?: ComparisonArtifact | null;
   run_id: string;
   title: string;
   status: ComparisonRun['status'];
