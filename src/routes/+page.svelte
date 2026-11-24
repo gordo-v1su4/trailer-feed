@@ -1,10 +1,8 @@
 <script lang="ts">
   import LegacyText from '$lib/components/LegacyText.svelte';
   import { fade } from 'svelte/transition';
-  import { goto } from '$app/navigation';
   import MediaLightbox from '$lib/components/MediaLightbox.svelte';
   import ClipCard from '$lib/components/ClipCard.svelte';
-  import ProjectCard from '$lib/components/ProjectCard.svelte';
   import Icon from '$lib/components/Icon.svelte';
   import { featuredCoverArtifact, featuredTake, plural, portfolioStatusVisible, studio, type Take } from '$lib/ui/studio.svelte';
   import { showTitle } from '$lib/data/titles';
@@ -178,9 +176,10 @@
             <a class="sbtn" href="/create"><Icon name="sparkles" /> Import project</a>
           </div>
           <div class="grid-clips">
-            {#each latest as take (take.id)}
+            {#each latest as take, i (take.id)}
               {@const project = studio.project(take.runId)}
               <ClipCard
+                rank={i + 1}
                 title={project?.title ?? showTitle(take.artifact.title)}
                 fullTitle={project?.fullTitle}
                 takeLabel={take.code}
@@ -195,29 +194,6 @@
           </div>
         </section>
       {/if}
-
-      <section aria-labelledby="projects-title">
-        <div class="row-head">
-          <div class="row-title">
-            <h2 id="projects-title" class="t-section">Projects</h2>
-            <span class="dim row-note">{projects.length} in the library</span>
-          </div>
-          <a class="sbtn" href="/comparisons">All projects <Icon name="up-right" /></a>
-        </div>
-        <div class="grid-posters">
-          {#each projects as project, i (project.runId)}
-            <ProjectCard
-              title={project.title}
-              fullTitle={project.fullTitle}
-              cover={featuredCoverArtifact(project)}
-              status={portfolioStatusVisible(project.status) ? project.status : ''}
-              takeCount={project.takes.length}
-              selected={i === heroIndex}
-              onselect={() => goto(`/comparisons?run=${project.runId}`)}
-            />
-          {/each}
-        </div>
-      </section>
     </div>
   {/if}
 </div>
@@ -255,7 +231,9 @@
 
   .screen {
     position: relative;
-    width: 100%;
+    width: 100vw;
+    max-width: 100vw;
+    margin-left: calc(50% - 50vw);
     aspect-ratio: 16 / 9;
     max-height: calc(100dvh - 40px);
     min-height: 240px;
@@ -332,8 +310,9 @@
     text-decoration: none;
   }
 
-  .hero-title-link:hover .hero-title {
-    opacity: 0.78;
+  .hero-title-link:hover .hero-title,
+  .hero-title-link:focus-visible .hero-title {
+    opacity: 1;
   }
 
   .hero-title {
@@ -341,13 +320,14 @@
     font-size: clamp(1.35rem, 2.4vw, 1.85rem);
     font-weight: 600;
     letter-spacing: -0.03em;
-    opacity: 0.65;
+    opacity: 0.4;
+    transition: opacity 0.15s ease;
   }
 
   .hero-kicker {
     margin: 0;
     font-size: 10px;
-    color: rgba(255, 255, 255, 0.5);
+    color: rgba(255, 255, 255, 0.35);
     text-transform: uppercase;
     letter-spacing: 0.14em;
   }
@@ -367,7 +347,7 @@
     font-size: 13px;
     font-weight: 400;
     line-height: 1.5;
-    color: rgba(255, 255, 255, 0.55);
+    color: rgba(255, 255, 255, 0.38);
     display: -webkit-box;
     -webkit-line-clamp: 2;
     line-clamp: 2;
@@ -424,13 +404,6 @@
     flex-shrink: 0;
   }
 
-  .row-note {
-    overflow: hidden;
-    font-size: 13px;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
   .latest-kicker {
     font-family: var(--dc-font-sans);
     font-size: 13px;
@@ -447,19 +420,8 @@
     gap: 16px;
   }
 
-  .grid-posters {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(min(100%, 240px), 1fr));
-    gap: 16px;
-  }
-
   @media (max-width: 560px) {
-    .row-note {
-      display: none;
-    }
-
-    .grid-clips,
-    .grid-posters {
+    .grid-clips {
       grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 10px;
     }

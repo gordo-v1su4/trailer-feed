@@ -207,20 +207,33 @@ button, select, textarea { font: inherit; }
   .dc-media-grid { grid-template-columns: 1fr; gap: 14px; }
 }
 
-/* Dense scrollbars */
+/* Overlay-style scrollbars: thin, dark thumb, transparent track (no layout gutter). */
+html {
+  scrollbar-gutter: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(56, 56, 56, 0.85) transparent;
+}
+
 ::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  width: 5px;
+  height: 5px;
 }
+
 ::-webkit-scrollbar-track {
-  background: var(--dc-bg);
+  background: transparent;
 }
+
 ::-webkit-scrollbar-thumb {
-  background: var(--dc-border);
-  border-radius: var(--dc-radius);
+  background: rgba(48, 48, 48, 0.72);
+  border-radius: 999px;
 }
+
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--dc-text-dim);
+  background: rgba(72, 72, 72, 0.92);
+}
+
+::-webkit-scrollbar-thumb:active {
+  background: rgba(88, 88, 88, 0.95);
 }
 
 /* Pindeck-style table density */

@@ -6,6 +6,8 @@ A video portfolio for importing finished projects, watching versions, comparing 
 
 - Website: https://www.trailerfeed.video
 - Catalog API: https://media.v1su4.dev/trailer-feed
+- Homelab / URL map (Git): proxmox-home `docs/trailer-feed-service.md`
+- Homelab / URL map (vault): `hermes-notebook-vault/04-Projects/Trailer Feed/README.md`
 - Repository: https://github.com/gordo-v1su4/trailer-feed
 
 ## Use

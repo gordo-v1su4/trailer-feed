@@ -10,6 +10,7 @@
     playOnHover = false,
     selected = false,
     density = 'full',
+    rank,
     onselect,
   }: {
     title: string;
@@ -22,6 +23,7 @@
     playOnHover?: boolean;
     selected?: boolean;
     density?: 'full' | 'thumb';
+    rank?: number;
     onselect?: () => void;
   } = $props();
 
@@ -69,18 +71,26 @@
     {/if}
     <div class="clip-shade" aria-hidden="true"></div>
 
-    <div class="clip-top">
-      <span class="clip-top-tags">
-        <span class="stag">{takeLabel}</span>
-        {#if isNewest}<span class="stag tone-warm">Newest take</span>{/if}
-      </span>
-      {#if timecode}<span class="clip-time">{timecode}</span>{/if}
-    </div>
+    {#if density === 'thumb'}
+      <div class="clip-top">
+        <span class="clip-top-tags">
+          <span class="stag">{takeLabel}</span>
+          {#if isNewest}<span class="stag tone-warm">Newest take</span>{/if}
+        </span>
+        {#if timecode}<span class="clip-time">{timecode}</span>{/if}
+      </div>
+    {:else if rank !== undefined}
+      <span class="clip-rank mono" aria-hidden="true">{rank}</span>
+    {/if}
 
     {#if density === 'full'}
       <div class="clip-footer">
-        <span class="t-card clip-title">{title}</span>
-        {#if status}<span class="stag tone-review clip-status">{status}</span>{/if}
+        <div class="clip-title-line">
+          <span class="t-card clip-title">{title}</span>
+          <span class="clip-ver mono">{takeLabel}</span>
+          {#if status}<span class="stag tone-review clip-status">{status}</span>{/if}
+        </div>
+        {#if timecode}<span class="clip-time-bottom mono">{timecode}</span>{/if}
       </div>
     {/if}
   </div>
@@ -137,6 +147,16 @@
     background: linear-gradient(to top, rgba(0, 0, 0, 0.75), transparent 45%, rgba(0, 0, 0, 0.25));
   }
 
+  .clip-rank {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.32);
+    letter-spacing: 0.06em;
+    pointer-events: none;
+  }
+
   .clip-top {
     position: absolute;
     top: 10px;
@@ -177,17 +197,56 @@
     bottom: 10px;
     left: 10px;
     display: flex;
-    align-items: flex-end;
-    justify-content: space-between;
-    gap: 8px;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
     pointer-events: none;
+  }
+
+  .clip-title-line {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 8px;
+    min-width: 0;
+    max-width: 100%;
   }
 
   .clip-title {
     min-width: 0;
     color: #fff;
-    opacity: 0.65;
+    opacity: 0.38;
     text-shadow: 0 1px 8px rgba(0, 0, 0, 0.8);
+    transition: opacity 0.15s ease;
+  }
+
+  .clip:hover .clip-title {
+    opacity: 1;
+  }
+
+  .clip-ver {
+    flex-shrink: 0;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: rgba(255, 255, 255, 0.35);
+    transition: color 0.15s ease;
+  }
+
+  .clip:hover .clip-ver {
+    color: rgba(255, 255, 255, 0.85);
+  }
+
+  .clip-time-bottom {
+    font-size: 10px;
+    letter-spacing: 0.06em;
+    color: rgba(255, 255, 255, 0.32);
+    font-variant-numeric: tabular-nums;
+    transition: color 0.15s ease;
+  }
+
+  .clip:hover .clip-time-bottom {
+    color: rgba(255, 255, 255, 0.72);
   }
 
   .clip-status {
