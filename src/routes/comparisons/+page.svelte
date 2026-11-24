@@ -12,10 +12,8 @@
   import RemoveExternalVersion from '$lib/components/RemoveExternalVersion.svelte';
   import CopyButton from '$lib/components/CopyButton.svelte';
   import Icon from '$lib/components/Icon.svelte';
-  import PrototypeSwitcher from '$lib/components/PrototypeSwitcher.svelte';
   import { setFeaturedTake } from '$lib/data/project-featured';
-  import { readVariant, searchParamsWithVariant } from '$lib/ui/prototype-variant';
-  import { featuredCoverArtifact, featuredTake, portfolioStatusVisible, studio, plural, type Take } from '$lib/ui/studio.svelte';
+  import { featuredCoverArtifact, featuredTake, studio, plural, type Take } from '$lib/ui/studio.svelte';
   import { toneFor } from '$lib/ui/tones';
   import { mediaApi } from '$lib/data/media-api';
   import { parseRunQuestion } from '$lib/data/run-brief';
@@ -24,7 +22,6 @@
 
   type Drawer = 'prompt' | 'references' | 'takes' | 'brief' | 'thumbnail';
 
-  const variant = $derived(readVariant(page.url.searchParams));
   const project = $derived(studio.project(page.url.searchParams.get('run')) ?? studio.projects[0]);
   const takes = $derived(project?.takes ?? []);
   const defaultTake = $derived(project ? featuredTake(project) : undefined);
@@ -71,7 +68,7 @@
   const brief = $derived(detail?.brief?.trim() || parseRunQuestion(question).creativeBrief || '');
 
   function go(runId: string, takeId?: string) {
-    const params = searchParamsWithVariant(new URLSearchParams({ run: runId }));
+    const params = new URLSearchParams({ run: runId });
     if (takeId) params.set('take', takeId);
     void goto(`?${params}`, { replaceState: true, noScroll: true, keepFocus: true });
   }
@@ -183,11 +180,7 @@
       removeOpen = false;
       studio.forget(runId);
       const next = studio.projects[0];
-      const target = next
-        ? `?${searchParamsWithVariant(new URLSearchParams({ run: next.runId }))}`
-        : searchParamsWithVariant(new URLSearchParams()).toString()
-          ? `?${searchParamsWithVariant(new URLSearchParams())}`
-          : '/comparisons';
+      const target = next ? `?run=${encodeURIComponent(next.runId)}` : '/comparisons';
       await goto(target.startsWith('?') ? `/comparisons${target}` : target, { replaceState: true });
     } catch (error) {
       if (error instanceof SignInRequired) removeNeedSignIn = true;
@@ -237,7 +230,7 @@
   <title>{project ? `${project.title} · Projects` : 'Projects'} · Trailer Feed</title>
 </svelte:head>
 
-<div class="studio-column projects" data-variant={variant}>
+<div class="studio-column projects">
   {#if !studio.loaded}
     <p class="state"><Icon name="loader" size={16} /> Opening projects…</p>
   {:else if !project}
@@ -265,7 +258,7 @@
       </nav>
     {/if}
 
-    <header class="head" class:head-c={variant === 'C'}>
+    <header class="head">
       <div class="head-copy">
         {#if editing}
           <form class="rename" onsubmit={saveRename}>
@@ -293,29 +286,15 @@
         {#if studio.pending.includes(project.runId)}
           <p class="pending" role="status"><Icon name="loader" size={12} /> Saved. Showing the change here as soon as the catalog can be read again.</p>
         {/if}
-        {#if variant !== 'C'}
-          <div class="tags">
-            {#if portfolioStatusVisible(project.status)}
-              <span class="stag tone-{toneFor(project.status)}">{project.status}</span>
-            {/if}
-            <span class="stag tone-review">{plural(takes.length, 'take')}</span>
-            {#each writers as w (w.answer_id)}
-              <span class="stag tone-{toneFor(w.model_name)}">{w.model_name}</span>
-            {/each}
-          </div>
-        {:else}
-          <p class="meta-quiet">{plural(takes.length, 'take')}{#if take?.model} · <LegacyText text={take.model} />{/if}</p>
-        {/if}
+        <p class="meta-quiet">{plural(takes.length, 'take')}</p>
       </div>
-      {#if variant !== 'C'}
-        <div class="head-actions">
-          <button type="button" class="sbtn" onclick={() => (importOpen = true)}><Icon name="upload" /> Import cut</button>
-        </div>
-      {/if}
+      <div class="head-actions">
+        <button type="button" class="sbtn" onclick={() => (importOpen = true)}><Icon name="upload" /> Import cut</button>
+      </div>
     </header>
 
     {#if take}
-      <section class="review" aria-label="Takes" data-layout={variant.toLowerCase()}>
+      <section class="review" aria-label="Takes" data-layout="b">
         <div class="player-stack">
           <TakePlayer
             primary={take}
@@ -325,36 +304,26 @@
             onprev={() => step(-1)}
             onnext={() => step(1)}
           />
-          {#if variant === 'B' && takes.length > 1}
+          {#if takes.length > 1}
             <div class="take-filmstrip" aria-label="Takes">
               {#each takes as t (t.id)}
-                <button type="button" class="strip-chip" class:active={t.id === take.id} onclick={() => selectTake(t)}>
-                  <span class="strip-code">{t.code}</span>
-                  {#if t.model}<span class="strip-model"><LegacyText text={t.model} /></span>{/if}
+                <button
+                  type="button"
+                  class="strip-thumb"
+                  class:active={t.id === take.id}
+                  title={`${t.code}${t.model ? ` · ${t.model}` : ''}`}
+                  aria-label={`Switch to take ${t.code}`}
+                  onclick={() => selectTake(t)}
+                >
+                  {#if t.artifact.thumbnail_url}
+                    <img src={t.artifact.thumbnail_url} alt="" loading="lazy" decoding="async" />
+                  {:else}
+                    <span class="strip-fallback">{t.code}</span>
+                  {/if}
                 </button>
               {/each}
             </div>
           {/if}
-        </div>
-        <div class="rail" aria-label="All takes" class:hidden={variant !== 'A'}>
-          {#each takes.toReversed() as t (t.id)}
-            <div class="rail-item">
-              <ClipCard
-                density="thumb"
-                title={project.title}
-                fullTitle={`${project.fullTitle} ${t.code}`}
-                takeLabel={t.code}
-                writer={t.writer}
-                videoModel={t.model}
-                videoUrl={t.artifact.media_url}
-                thumbnailUrl={t.artifact.thumbnail_url}
-                isNewest={t.isNewest}
-                playOnHover={studio.playOnHover}
-                selected={t.id === take.id || (mode !== 'watch' && t.id === compareTake?.id)}
-                onselect={() => selectTake(t)}
-              />
-            </div>
-          {/each}
         </div>
       </section>
     {:else}
@@ -373,8 +342,8 @@
       </button>
     {/if}
 
-    <section class="drawer" class:drawer-b={variant === 'B'} class:drawer-c={variant === 'C'}>
-      <div class="drawer-tabs" class:tabs-c={variant === 'C'} role="tablist" aria-label="Project details">
+    <section class="drawer drawer-b">
+      <div class="drawer-tabs" role="tablist" aria-label="Project details">
         {#each [
           ['prompt', 'Prompt', 'Prompt for the active take'],
           ['references', 'References', `${referenceCount} reference image${referenceCount === 1 ? '' : 's'}`],
@@ -486,8 +455,6 @@
                 density="thumb"
                 title={project.title}
                 takeLabel={t.code}
-                writer={t.writer}
-                videoModel={t.model}
                 videoUrl={t.artifact.media_url}
                 thumbnailUrl={t.artifact.thumbnail_url}
                 isNewest={t.isNewest}
@@ -558,8 +525,6 @@
     {/if}
   {/if}
 </div>
-
-<PrototypeSwitcher />
 
 <style>
   .take-owner-actions {display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
@@ -788,8 +753,7 @@
     margin: 0;
   }
 
-  .review[data-layout='b'],
-  .review[data-layout='c'] {
+  .review[data-layout='b'] {
     grid-template-columns: minmax(0, 1fr);
   }
 
@@ -802,49 +766,48 @@
     gap: 8px;
     margin-top: 10px;
     overflow-x: auto;
-    padding-bottom: 4px;
+    padding: 2px 2px 4px;
     scrollbar-width: thin;
   }
 
-  .strip-chip {
+  .strip-thumb {
     flex: 0 0 auto;
-    display: grid;
-    gap: 2px;
-    min-width: 88px;
-    padding: 8px 10px;
-    border: 1px solid #2a2a2a;
-    border-radius: 6px;
-    background: #101010;
-    color: var(--dc-text);
-    text-align: left;
+    width: 72px;
+    aspect-ratio: 16 / 9;
+    padding: 0;
+    overflow: hidden;
+    border: 0;
+    border-radius: 3px;
+    background: #0a0a0a;
     cursor: pointer;
-    font-family: var(--dc-font-mono);
+    opacity: 0.72;
+    transition: opacity 0.15s ease, box-shadow 0.15s ease;
   }
 
-  .strip-chip.active {
-    border-color: #666;
-    background: #1c1c1c;
+  .strip-thumb img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
   }
 
-  .strip-code {
-    font-size: 12px;
-    font-weight: 600;
+  .strip-thumb:hover {
+    opacity: 1;
   }
 
-  .strip-model {
-    font-family: var(--dc-font-sans);
-    font-size: 10px;
+  .strip-thumb.active {
+    opacity: 1;
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.55);
+  }
+
+  .strip-fallback {
+    display: grid;
+    place-items: center;
+    width: 100%;
+    height: 100%;
     color: var(--dc-text-muted);
-    text-transform: none;
-    letter-spacing: 0;
-  }
-
-  .rail.hidden {
-    display: none;
-  }
-
-  .head-c .t-page {
-    font-size: clamp(1.75rem, 3vw, 2.5rem);
+    font-family: var(--dc-font-mono);
+    font-size: 10px;
   }
 
   .meta-quiet {
@@ -855,20 +818,6 @@
 
   .drawer-b {
     min-height: min(480px, 62vh);
-  }
-
-  .drawer-c .drawer-body {
-    border-top: 1px solid #222;
-    padding-top: 12px;
-  }
-
-  .tabs-c .tab {
-    border-radius: 999px;
-    background: #121212;
-  }
-
-  .tabs-c .tab.active {
-    background: #2c2c2c;
   }
 
   .drawer-tabs {

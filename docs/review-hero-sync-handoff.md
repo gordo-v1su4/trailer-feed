@@ -1,6 +1,6 @@
 # Review Room → Trailer Feed hero take (handoff)
 
-> **Paused (2026-11-25):** Do **not** change Review Room or live destination sync today. Review has active work in flight; pick this up **tomorrow**. Trailer Feed already ingests `featured` / `is_current` when Review sends it—no Review-side wiring yet.
+> **2026-11-25:** Review Room sends `is_current: true` on `POST /external/review/versions` when the synced version is the asset pick at delivery time (`review-room-svelte` `destinationSync.ts`). Trailer Feed maps that to `featured_artifact_id`. **Still open:** when **Make current** changes after a take is already synced, push hero to Trailer Feed (dedicated ingest call or resync).
 
 **Trailer Feed (done on our side):** `featured` or `is_current` on `POST /external/review/versions` → `featured_artifact_id` on the run. Owner override: `POST /runs/<run_id>/featured` (**Set hero take** in UI). Deploy API when ready so production catalog matches local backend.
 

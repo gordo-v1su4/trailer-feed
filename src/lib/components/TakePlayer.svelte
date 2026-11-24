@@ -40,7 +40,7 @@
   let canvas = $state<HTMLCanvasElement | null>(null);
   let compositor = $state<TakeCompositor | null>(null);
   let gpuFailed = $state(false);
-  let playing = $state(false);
+  let playing = $state(true);
   let muted = $state(true);
   let split = $state(0.5);
   let duration = $state(0);
@@ -49,20 +49,23 @@
 
   const comparing = $derived(mode !== 'watch' && !!secondary && secondary.id !== primary.id);
   const gpuView = $derived(comparing && (mode === 'blend' || mode === 'diff') && gpuCapable && !gpuFailed);
+  /** WebGPU samples frames; everything else plays the catalog URL as-is (Review Room URLs break with ?cors=1). */
+  const needCorsFrames = $derived(gpuView);
 
-  /*
-   * The GPU reads these frames, so they load CORS-enabled. A separate cache
-   * key keeps the browser from reusing a copy a thumbnail fetched without
-   * CORS headers (the media host does not send Vary: Origin).
-   */
-  function corsUrl(url: string | undefined) {
+  function playUrl(url: string | undefined) {
     if (!url) return url;
-    return `${url}${url.includes("?") ? "&" : "?"}cors=1`;
+    if (!needCorsFrames) return url;
+    return `${url}${url.includes('?') ? '&' : '?'}cors=1`;
   }
 
   function togglePlay() {
     playing = !playing;
   }
+
+  $effect(() => {
+    void primary.id;
+    playing = true;
+  });
 
   // Keep both takes playing, pausing and positioned together.
   $effect(() => {
@@ -186,13 +189,14 @@
     <video
       bind:this={videoA}
       class="take take-a"
-      src={corsUrl(primary.artifact.media_url)}
-      poster={corsUrl(primary.artifact.thumbnail_url)}
-      crossorigin="anonymous"
+      src={playUrl(primary.artifact.media_url)}
+      poster={comparing ? playUrl(primary.artifact.thumbnail_url) : undefined}
+      crossorigin={needCorsFrames ? 'anonymous' : undefined}
       {muted}
+      autoplay
       playsinline
       loop
-      preload={comparing ? 'auto' : 'metadata'}
+      preload="auto"
       aria-label={`Take ${primary.code}`}
       ontimeupdate={onTime}
       onloadeddata={(e) => onLoaded(e.currentTarget)}
@@ -204,9 +208,9 @@
       <video
         bind:this={videoB}
         class="take take-b"
-        src={corsUrl(secondary.artifact.media_url)}
-        poster={corsUrl(secondary.artifact.thumbnail_url)}
-        crossorigin="anonymous"
+        src={playUrl(secondary.artifact.media_url)}
+        poster={playUrl(secondary.artifact.thumbnail_url)}
+        crossorigin={needCorsFrames ? 'anonymous' : undefined}
         muted
         playsinline
         loop

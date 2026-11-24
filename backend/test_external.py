@@ -403,6 +403,34 @@ class ExternalVersionTests(unittest.TestCase):
         public = app.get_document(Mock(headers={}, path_params={'run_id': self.run_id, 'file': 'artifacts.json'}))
         self.assertEqual(json.loads(public.description), [])
 
+    def test_ingest_is_current_sets_hero(self):
+        batch_id = 'batch-is-current-' + self.run_id
+        identity = {key: self.payload[key] for key in ('source_asset_id', 'source_version_id', 'source_created_at')}
+        self.assertEqual(self.reserve([identity], batch_id).status_code, 201)
+        second = {**identity, 'source_version_id': 'version-pick', 'source_created_at': '2026-10-02T10:00:00+00:00'}
+        self.assertEqual(self.reserve([second], batch_id + '-b').status_code, 201)
+        self.assertEqual(self.ingest({**self.payload, **identity, 'batch_id': batch_id}).status_code, 201)
+        picked = {**self.payload, **second, 'batch_id': batch_id + '-b', 'is_current': True, 'media_url': 'https://review.v1su4.dev/api/destination-media/pick-grant/version-pick/original'}
+        self.assertEqual(self.ingest(picked).status_code, 201)
+        index = app.index(Mock(headers={}))
+        row = next(item for item in json.loads(index.description)['runs'] if item.get('run_id') == self.run_id)
+        with app.connect() as db:
+            artifacts = app.document(db, self.run_id, 'artifacts')
+            hero = next(item for item in artifacts if item.get('source_version_id') == 'version-pick')
+        self.assertEqual(row['preview']['artifact_id'], hero['artifact_id'])
+
+    def test_hero_current_after_registration(self):
+        batch_id = 'batch-hero-current-' + self.run_id
+        identity = {key: self.payload[key] for key in ('source_asset_id', 'source_version_id', 'source_created_at')}
+        self.assertEqual(self.reserve([identity], batch_id).status_code, 201)
+        self.assertEqual(self.ingest({**self.payload, **identity, 'batch_id': batch_id}).status_code, 201)
+        response = app.review_hero_current(Mock(body=json.dumps({'run_id': self.run_id, **identity, 'consent_generation': 1}), headers={'authorization': 'Bearer test-ingest-only'}))
+        self.assertEqual(response.status_code, 200)
+        body = json.loads(response.description)
+        with app.connect() as db:
+            run = app.document(db, self.run_id, 'run')
+        self.assertEqual(body['featured_artifact_id'], run.get('featured_artifact_id'))
+
     def test_index_preview_uses_featured_take(self):
         oldest = {key: self.payload[key] for key in ('source_asset_id', 'source_version_id', 'source_created_at')}
         newer = {**oldest, 'source_version_id': 'version-2', 'source_created_at': '2026-10-02T10:00:00+00:00'}

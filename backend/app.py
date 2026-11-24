@@ -1201,6 +1201,45 @@ def worker():
         time.sleep(5)
 
 
+@app.post('/external/review/hero-current')
+def review_hero_current(request: Request):
+    """Set portfolio hero on an already-registered Review version (Make current after sync)."""
+    denied = review_ingest_error(request)
+    if denied is not None:
+        return denied
+    try:
+        if len(request.body) > 4096:
+            raise ValueError()
+        payload = json.loads(request.body)
+        run_id = payload['run_id']
+        asset_id, version_id = payload['source_asset_id'], payload['source_version_id']
+        generation = payload.get('consent_generation')
+        if not isinstance(run_id, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', run_id):
+            raise ValueError()
+        if any(not isinstance(value, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', value) for value in (asset_id, version_id)):
+            raise ValueError()
+        if generation is not None and (isinstance(generation, bool) or not isinstance(generation, int) or not 1 <= generation <= 2147483647):
+            raise ValueError()
+    except (ValueError, KeyError, TypeError, AttributeError):
+        return reply(request, {'error': 'Provide the registered Review source version and target run'}, 400)
+    with lock, connect() as db:
+        row = db.execute("SELECT * FROM external_versions WHERE source_app='review-room' AND source_asset_id=? AND source_version_id=?", (asset_id, version_id)).fetchone()
+        if not row or row['state'] != 'registered':
+            return reply(request, {'error': 'Registered Review version not found'}, 404)
+        if row['run_id'] != run_id:
+            return reply(request, {'error': 'Source version is connected to a different project'}, 409)
+        if generation is not None and row['generation'] != generation:
+            return reply(request, {'error': 'Source consent generation changed'}, 409)
+        if not document(db, run_id, 'run'):
+            return reply(request, {'error': 'Connected project not found'}, 404)
+        try:
+            apply_hero_take(db, run_id, row['artifact_id'])
+        except ValueError:
+            return reply(request, {'error': 'Hero take is not available for this project'}, 409)
+        featured = document(db, run_id, 'run').get('featured_artifact_id')
+    return reply(request, {'featured_artifact_id': featured, 'artifact_id': row['artifact_id']})
+
+
 @app.post('/external/review/unsyncs')
 def unsync_review_version(request: Request):
     denied = review_ingest_error(request)

@@ -8,8 +8,8 @@ export const VARIANT_BLURBS: Record<PrototypeVariant, { title: string; home: str
   },
   B: {
     title: 'Studio left',
-    home: 'Full-bleed video · sans stack bottom-left · mono chips',
-    projects: 'Player + filmstrip takes · quiet header',
+    home: 'Trailer-first copy · no model or take chips · transport bottom-left',
+    projects: 'Thumb filmstrip · take count only in header',
   },
   C: {
     title: 'Poster',

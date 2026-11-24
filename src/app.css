@@ -2759,10 +2759,37 @@ nav a.active {
   white-space: nowrap;
 }
 
-.t-page { font: 400 clamp(28px, 2.5vw, 36px) / 1.12 var(--dc-font-serif); letter-spacing: -0.01em; }
-.t-section { font: 400 clamp(20px, 1.8vw, 24px) / 1.18 var(--dc-font-serif); }
-.t-card { font: 400 clamp(18px, 1.4vw, 22px) / 1.2 var(--dc-font-serif); }
+.t-page {
+  font: 600 clamp(24px, 2.2vw, 32px) / 1.12 var(--dc-font-sans);
+  letter-spacing: -0.03em;
+}
+
+.t-section {
+  font: 600 clamp(18px, 1.6vw, 22px) / 1.15 var(--dc-font-sans);
+  letter-spacing: -0.02em;
+}
+
+.t-card {
+  font: 600 clamp(16px, 1.2vw, 20px) / 1.2 var(--dc-font-sans);
+  letter-spacing: -0.02em;
+}
+
 .t-body { font: 500 14px / 1.35 var(--dc-font-sans); }
+
+.row-note,
+.meta-quiet,
+.poster-meta {
+  font-family: var(--dc-font-mono);
+  font-size: 10px;
+  font-weight: 400;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.logline {
+  font-family: var(--dc-font-sans);
+  font-weight: 400;
+}
 
 .muted { color: var(--dc-text-muted); }
 .dim { color: var(--dc-text-dim); }

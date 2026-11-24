@@ -1,14 +1,8 @@
 <script lang="ts">
-  import LegacyText from '$lib/components/LegacyText.svelte';
-  import Icon from './Icon.svelte';
-  import { toneFor } from '$lib/ui/tones';
-
   let {
     title,
     fullTitle = title,
     takeLabel,
-    writer = '',
-    videoModel = '',
     status = '',
     videoUrl = '',
     thumbnailUrl = '',
@@ -21,8 +15,6 @@
     title: string;
     fullTitle?: string;
     takeLabel: string;
-    writer?: string;
-    videoModel?: string;
     status?: string;
     videoUrl?: string;
     thumbnailUrl?: string;
@@ -34,24 +26,11 @@
   } = $props();
 
   let video = $state<HTMLVideoElement | null>(null);
-  let playing = $state(false);
   let duration = $state(0);
 
   const timecode = $derived(
     duration ? `${Math.floor(duration / 60)}:${String(Math.round(duration % 60)).padStart(2, '0')}` : '',
   );
-
-  function togglePlay(event: MouseEvent) {
-    event.stopPropagation();
-    if (!video) return;
-    if (video.paused) {
-      void video.play().catch(() => {});
-      playing = true;
-    } else {
-      video.pause();
-      playing = false;
-    }
-  }
 
   function keydown(event: KeyboardEvent) {
     if (event.key === 'Enter' || event.key === ' ') {
@@ -70,8 +49,8 @@
   title={fullTitle}
   onclick={() => onselect?.()}
   onkeydown={keydown}
-  onmouseenter={() => { if (playOnHover && video) { void video.play().catch(() => {}); playing = true; } }}
-  onmouseleave={() => { if (playOnHover && video && !video.paused) { video.pause(); playing = false; } }}
+  onmouseenter={() => { if (playOnHover && video) void video.play().catch(() => {}); }}
+  onmouseleave={() => { if (playOnHover && video && !video.paused) video.pause(); }}
 >
   <div class="clip-frame">
     {#if videoUrl}
@@ -98,33 +77,13 @@
       {#if timecode}<span class="clip-time">{timecode}</span>{/if}
     </div>
 
-    {#if density === 'thumb'}
-      <div class="clip-bottom-tags">
-        {#if writer}<span class="stag tone-{toneFor(writer)}">{writer}</span>{/if}
-        {#if videoModel}<span class="stag tone-{toneFor(videoModel)}"><LegacyText text={videoModel} /></span>{/if}
-      </div>
-    {:else if videoUrl}
-      <div class="clip-actions">
-        <button type="button" class="sbtn sbtn-primary" onclick={togglePlay} title={playing ? 'Pause take' : 'Play take'}>
-          <Icon name={playing ? 'pause' : 'play'} filled />
-          <span>{playing ? 'Pause' : 'Play'}</span>
-        </button>
+    {#if density === 'full'}
+      <div class="clip-footer">
+        <span class="t-card clip-title">{title}</span>
+        {#if status}<span class="stag tone-review clip-status">{status}</span>{/if}
       </div>
     {/if}
   </div>
-
-  {#if density === 'full'}
-    <div class="clip-body">
-      <div class="clip-title-row">
-        <span class="t-card">{title}</span>
-        {#if status}<span class="stag tone-{toneFor(status)}">{status}</span>{/if}
-      </div>
-      <div class="clip-tags">
-        {#if writer}<span class="stag tone-{toneFor(writer)}">{writer}</span>{/if}
-        {#if videoModel}<span class="stag tone-{toneFor(videoModel)}"><LegacyText text={videoModel} /></span>{/if}
-      </div>
-    </div>
-  {/if}
 </div>
 
 <style>
@@ -136,11 +95,11 @@
     text-align: left;
     cursor: pointer;
     user-select: none;
-    transition: background 0.15s ease;
+    transition: filter 0.15s ease;
   }
 
   .clip:hover {
-    background: #161616;
+    filter: brightness(1.06);
   }
 
   .clip-frame {
@@ -158,7 +117,6 @@
     object-fit: cover;
   }
 
-  /* Thumbnails show selection with light: the chosen take is lit, the rest dimmed. */
   .clip.thumb .clip-frame video,
   .clip.thumb .clip-frame img {
     filter: brightness(0.55) saturate(0.8);
@@ -176,7 +134,7 @@
     position: absolute;
     inset: 0;
     pointer-events: none;
-    background: linear-gradient(to top, rgba(0, 0, 0, 0.8), transparent 50%, rgba(0, 0, 0, 0.3));
+    background: linear-gradient(to top, rgba(0, 0, 0, 0.75), transparent 45%, rgba(0, 0, 0, 0.25));
   }
 
   .clip-top {
@@ -191,9 +149,7 @@
     pointer-events: none;
   }
 
-  .clip-top-tags,
-  .clip-bottom-tags,
-  .clip-tags {
+  .clip-top-tags {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
@@ -209,37 +165,32 @@
     border-radius: 3px;
     background: rgba(0, 0, 0, 0.7);
     color: var(--dc-text-muted);
-    font-size: 12px;
+    font-family: var(--dc-font-mono);
+    font-size: 11px;
     font-variant-numeric: tabular-nums;
+    letter-spacing: 0.04em;
   }
 
-  .clip-bottom-tags {
-    position: absolute;
-    right: 8px;
-    bottom: 8px;
-    left: 8px;
-    pointer-events: none;
-  }
-
-  .clip-actions {
+  .clip-footer {
     position: absolute;
     right: 10px;
     bottom: 10px;
-  }
-
-  .clip-body {
-    padding: 12px;
-  }
-
-  .clip-title-row {
+    left: 10px;
     display: flex;
-    align-items: baseline;
+    align-items: flex-end;
     justify-content: space-between;
     gap: 8px;
-    min-width: 0;
+    pointer-events: none;
   }
 
-  .clip-tags {
-    margin-top: 8px;
+  .clip-title {
+    min-width: 0;
+    color: #fff;
+    opacity: 0.65;
+    text-shadow: 0 1px 8px rgba(0, 0, 0, 0.8);
+  }
+
+  .clip-status {
+    flex-shrink: 0;
   }
 </style>

@@ -124,6 +124,10 @@
     min-width: 0;
   }
 
+  .poster-copy :global(.t-card) {
+    opacity: 0.65;
+  }
+
   .poster-meta {
     color: var(--dc-text-muted);
     font-size: 12px;

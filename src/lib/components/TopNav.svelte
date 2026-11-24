@@ -2,19 +2,16 @@
   import { page } from '$app/state';
   import { NAV_LINKS } from '$lib/nav';
   import { studio } from '$lib/ui/studio.svelte';
-  import { showTitle } from '$lib/data/titles';
   import Icon from './Icon.svelte';
 
   const pathname = $derived(page.url.pathname);
-  const newest = $derived(studio.newest);
-  const newestProject = $derived(newest ? studio.project(newest.runId) : undefined);
 
   $effect(() => {
     void studio.ensure();
   });
 </script>
 
-<header class="nav">
+<header class="nav nav-studio">
   <div class="nav-bar">
     <a class="brand" href="/" title="Trailer Feed, the private trailer screening room">
       <Icon name="film" size={16} />
@@ -34,17 +31,6 @@
         </a>
       {/each}
     </nav>
-
-    {#if newest && newestProject}
-      <a
-        class="sbtn sbtn-primary newest"
-        href={`/comparisons?run=${newest.runId}&take=${newest.id}`}
-        title={`Jump to the newest take: ${newestProject.fullTitle} (${newest.code})`}
-      >
-        <Icon name="play" size={12} filled />
-        <span class="newest-text">Newest: {showTitle(newestProject.title)} ({newest.code})</span>
-      </a>
-    {/if}
   </div>
 </header>
 
@@ -64,7 +50,7 @@
   .nav-bar {
     display: flex;
     align-items: center;
-    gap: clamp(16px, 3vw, 48px);
+    gap: clamp(12px, 2vw, 24px);
     height: var(--dc-nav-height);
     max-width: var(--dc-page-max);
     box-sizing: content-box;
@@ -121,18 +107,6 @@
     background: rgba(255, 255, 255, 0.12);
   }
 
-  .newest {
-    min-width: 0;
-    margin-left: auto;
-  }
-
-  .newest-text {
-    max-width: 260px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  /* Narrow phones: all five tabs win over the logo mark. */
   @media (max-width: 400px) {
     .brand {
       display: none;
@@ -140,13 +114,37 @@
   }
 
   .brand:focus-visible,
-  .tab:focus-visible,
-  .newest:focus-visible {
+  .tab:focus-visible {
     outline: none;
     box-shadow: 0 0 0 3px rgba(231, 229, 228, 0.2);
   }
 
-  /* Phones: the icon stands in for the wordmark and the newest take for its label. */
+  .nav-studio .brand {
+    font-family: var(--dc-font-sans);
+    font-size: 18px;
+    font-weight: 600;
+    letter-spacing: -0.03em;
+  }
+
+  .nav-studio .tab {
+    font-family: var(--dc-font-mono);
+    font-size: 10px;
+    font-weight: 400;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    background: transparent;
+  }
+
+  .nav-studio .tab:hover {
+    color: #fff;
+    background: transparent;
+  }
+
+  .nav-studio .tab.active {
+    color: #fff;
+    background: transparent;
+  }
+
   @media (max-width: 720px) {
     .brand span {
       display: none;
@@ -162,15 +160,6 @@
 
     .tab {
       padding: 0 7px;
-    }
-
-    .newest {
-      width: 28px;
-      padding: 0;
-    }
-
-    .newest-text {
-      display: none;
     }
   }
 </style>
