@@ -1,14 +1,44 @@
 # Review Room → Trailer Feed hero take (handoff)
 
-> **2026-11-25:** Review Room sends `is_current: true` on `POST /external/review/versions` when the synced version is the asset pick at delivery time (`review-room-svelte` `destinationSync.ts`). Trailer Feed maps that to `featured_artifact_id`. **Still open:** when **Make current** changes after a take is already synced, push hero to Trailer Feed (dedicated ingest call or resync).
+**Status: implemented on `main` (2026-11-24).** Verify production API `revision` in
+`/health` includes `hero-current` before relying on post-sync Make current in prod.
 
-**Trailer Feed (done on our side):** `featured` or `is_current` on `POST /external/review/versions` → `featured_artifact_id` on the run. Owner override: `POST /runs/<run_id>/featured` (**Set hero take** in UI). Deploy API when ready so production catalog matches local backend.
+## Two paths to the same hero
 
-**Tomorrow — Review Room only:** When the user chooses **Make current** on a version synced to Trailer Feed, include `"is_current": true` (or `"featured": true`) on the next version delivery (or a dedicated metadata update) so the target hero matches Review's pick without manual **Set hero take** in Trailer Feed.
+| When | Review Room | Trailer Feed API |
+|------|-------------|------------------|
+| **Version delivery (sync)** | `destinationSync.ts` adds `is_current: true` when `version._id === asset.currentVersionId` on the delivery payload | `POST /external/review/versions` → `apply_hero_take` when `featured` or `is_current` |
+| **Make current after sync** | `personal.setCurrentVersion` and `automation.setCurrentVersion` schedule `destinationSync.scheduleHeroForCurrentPick` → `destinationDelivery.heroCurrent` | `POST /external/review/hero-current` with registered `source_asset_id` / `source_version_id` + `run_id` |
 
-Suggested touchpoints:
+Owner override in Trailer Feed UI remains `POST /runs/<run_id>/featured` (**Set hero take**).
 
-- `convex/destinationSync.ts` / delivery payload builder — add boolean from asset's current version id
-- Compare with `PUT /api/v1/assets/{assetId}/current-version` in Review's agent API (the pick)
+## Touchpoints (code)
 
-**Do not** send hero flags for every synced version; only the version that is current at sync time or when Make current changes after sync.
+**Review Room (`review-room-svelte`):**
+
+- `convex/destinationSync.ts` — `is_current` on version delivery; `heroPickContext`, `scheduleHeroForCurrentPick`
+- `convex/destinationDelivery.ts` — `heroCurrent` action posts to `hero-current`
+- `convex/personal.ts`, `convex/automation.ts` — Make current schedules hero push when pick changes
+
+**Trailer Feed (`trailer-feed`):**
+
+- `backend/app.py` — `review_hero_current`, ingest `is_current` / `featured`
+- `backend/test_external.py` — `test_ingest_is_current_sets_hero`, `test_hero_current_after_registration`
+
+## Rules
+
+- Do **not** send hero flags on every synced version; only at delivery when that version is the pick, or when Make current changes after sync.
+- Review playback URLs for Watch must **not** use `?cors=1` on `destination-media` originals (Trailer Feed `TakePlayer`).
+
+## Deploy / verify
+
+- **Review:** GitHub `main` → **Deploy to App VM** (Convex + frontend on app-vm).
+- **Trailer Feed API:** `trailer-feed-update.service` on app-vm when `backend/` or `deploy/` change on GitHub `main`.
+- **Trailer Feed UI:** Vercel from `main` (independent).
+
+```bash
+curl -fsS -A "Mozilla/5.0" https://media.v1su4.dev/trailer-feed/health
+# revision prefix should match deployed backend commit (includes hero-current route)
+```
+
+Homelab URL map: `proxmox-home/docs/trailer-feed-service.md`.
