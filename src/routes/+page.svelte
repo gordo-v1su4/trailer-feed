@@ -10,7 +10,6 @@
   import { page } from '$app/state';
   import { hrefWithVariant, readVariant } from '$lib/ui/prototype-variant';
   import { featuredCoverArtifact, featuredTake, portfolioStatusVisible, studio, type Take } from '$lib/ui/studio.svelte';
-  import { toneFor } from '$lib/ui/tones';
   import { showTitle } from '$lib/data/titles';
   import type { ComparisonArtifact } from '$lib/types/comparison';
 
@@ -111,8 +110,7 @@
       <a class="sbtn sbtn-primary" href="/create"><Icon name="sparkles" /> Import project</a>
     </div>
   {:else}
-    <!-- Now playing: the video runs edge to edge, under the glass nav. -->
-    <section class="hero" class:hero-b={variant === 'B'} class:hero-c={variant === 'C'} aria-label="Now playing">
+    <section class="hero" aria-label="Now playing">
       <div class="screen">
         {#if heroTake}
           {#key heroTake.id}
@@ -131,83 +129,78 @@
         {:else}
           <p class="screen-empty muted">No render for this project yet</p>
         {/if}
-        <div class="screen-scrim" aria-hidden="true"></div>
-      </div>
+        <div class="scrim scrim-{variant.toLowerCase()}" aria-hidden="true"></div>
 
-      <div class="hero-overlay studio-column" class:overlay-c={variant === 'C'}>
-        {#key featured.runId}
-          <div class="title-card" class:glass-panel={variant !== 'C'} class:editorial-card={variant === 'C'} in:fade={{ duration: 300 }}>
-            {#if variant !== 'C'}
-              <div class="tags">
-                {#if portfolioStatusVisible(featured.status)}
-                  <span class="stag tone-{toneFor(featured.status)}">{featured.status}</span>
+        {#key `${featured.runId}-${variant}`}
+          <div class="overlay overlay-{variant.toLowerCase()}" in:fade={{ duration: 280 }}>
+            {#if variant === 'A'}
+              <div class="band">
+                <div class="band-main">
+                  <p class="hero-meta">{heroTake?.code ?? '—'}{#if heroTake?.model} · <LegacyText text={heroTake.model} />{/if}</p>
+                  <h1 class="hero-title" title={featured.fullTitle}><LegacyText text={featured.title} /></h1>
+                </div>
+                {#if featured.takes.length > 1}
+                  <nav class="take-rail mono" aria-label="Takes">
+                    {#each featured.takes as t (t.id)}
+                      <a class="take-chip" class:active={t.id === heroTake?.id} href={hrefWithVariant(takeHref(t), page.url.searchParams)}>{t.code}</a>
+                    {/each}
+                  </nav>
                 {/if}
+                <div class="band-actions">
+                  {#if heroTake}
+                    <a class="hero-textlink" href={hrefWithVariant(takeHref(heroTake), page.url.searchParams)}>Open {heroTake.code}</a>
+                  {/if}
+                  <a class="hero-textlink muted-link" href={hrefWithVariant(`/comparisons?run=${featured.runId}`, page.url.searchParams)}>All takes</a>
+                </div>
+              </div>
+            {:else if variant === 'B'}
+              <div class="stack">
+                <p class="hero-kicker mono">{pad(heroIndex + 1)}/{pad(projects.length)} · NOW SHOWING</p>
+                <h1 class="hero-title" title={featured.fullTitle}><LegacyText text={featured.title} /></h1>
                 {#if heroTake}
-                  <span class="stag tone-{toneFor(heroTake.model || heroTake.writer)}">
-                    {heroTake.code}{heroTake.writer ? ` · ${heroTake.writer}` : ''}{#if heroTake.model} · <LegacyText text={heroTake.model} />{/if}
-                  </span>
+                  <p class="hero-sub sans"><LegacyText text={heroTake.model || heroTake.writer} /> · {heroTake.code}</p>
+                {/if}
+                <p class="hero-logline sans"><LegacyText text={featured.logline} /></p>
+                {#if featured.takes.length > 1}
+                  <nav class="take-rail mono" aria-label="Takes">
+                    {#each featured.takes as t (t.id)}
+                      <a class="take-chip block" class:active={t.id === heroTake?.id} href={hrefWithVariant(takeHref(t), page.url.searchParams)}>{t.code}</a>
+                    {/each}
+                  </nav>
+                {/if}
+                <a class="hero-textlink" href={hrefWithVariant(`/comparisons?run=${featured.runId}`, page.url.searchParams)}>Project page →</a>
+              </div>
+            {:else}
+              <div class="poster">
+                {#if heroTake?.model}<p class="hero-kicker serif-lite"><LegacyText text={heroTake.model} /></p>{/if}
+                <h1 class="hero-title poster-title" title={featured.fullTitle}><LegacyText text={featured.title} /></h1>
+                <p class="hero-logline script"><LegacyText text={featured.logline} /></p>
+                {#if heroTake}
+                  <a class="hero-textlink poster-cta" href={hrefWithVariant(takeHref(heroTake), page.url.searchParams)}>{heroTake.code}</a>
                 {/if}
               </div>
-            {:else if heroTake?.model}
-              <p class="editorial-kicker"><LegacyText text={heroTake.model} /> · {heroTake.code}</p>
             {/if}
-            <h1 class="t-page" class:editorial-title={variant === 'C'} title={featured.fullTitle}><LegacyText text={featured.title} /></h1>
-            {#if variant !== 'C'}
-              <p class="logline"><LegacyText text={featured.logline} /></p>
-            {:else}
-              <p class="logline editorial-logline"><LegacyText text={featured.logline} /></p>
-            {/if}
-            {#if variant === 'A' && featured.takes.length > 1}
-              <nav class="take-pills" aria-label="Takes for this project">
-                {#each featured.takes as t (t.id)}
-                  <a
-                    class="take-pill"
-                    class:active={t.id === heroTake?.id}
-                    href={takeHref(t)}
-                    aria-current={t.id === heroTake?.id ? 'true' : undefined}
-                  >{t.code}</a>
-                {/each}
-              </nav>
-            {/if}
-            <div class="actions" class:actions-c={variant === 'C'}>
+
+            <div class="media-controls">
               {#if heroTake}
-                <a class="sbtn sbtn-primary" class:editorial-cta={variant === 'C'} href={hrefWithVariant(takeHref(heroTake), page.url.searchParams)}>
-                  <Icon name="play" size={12} filled />
-                  Watch {heroTake.code}
-                </a>
+                <button type="button" class="ctl" onclick={togglePlay} aria-label={heroPlaying ? 'Pause' : 'Play'}>
+                  <Icon name={heroPlaying ? 'pause' : 'play'} size={14} filled={!heroPlaying} />
+                </button>
+                <button type="button" class="ctl" onclick={() => (heroMuted = !heroMuted)} aria-label={heroMuted ? 'Unmute' : 'Mute'} aria-pressed={!heroMuted}>
+                  <Icon name={heroMuted ? 'mute' : 'volume'} size={14} />
+                </button>
               {/if}
-              {#if variant !== 'C'}
-                <a class="sbtn" href={hrefWithVariant(`/comparisons?run=${featured.runId}`, page.url.searchParams)}>
-                  <span class="wide-only">Compare all takes</span><span class="narrow-only">All takes</span> ({featured.takes.length}) <Icon name="up-right" />
-                </a>
-                {#if heroTake}
-                  <button type="button" class="sbtn sbtn-icon" onclick={togglePlay} aria-label={heroPlaying ? 'Pause hero video' : 'Play hero video'}>
-                    <Icon name={heroPlaying ? 'pause' : 'play'} filled={!heroPlaying} />
-                  </button>
-                  <button type="button" class="sbtn sbtn-icon" onclick={() => (heroMuted = !heroMuted)} aria-label={heroMuted ? 'Turn sound on' : 'Turn sound off'} aria-pressed={!heroMuted}>
-                    <Icon name={heroMuted ? 'mute' : 'volume'} />
-                  </button>
-                {/if}
+              {#if projects.length > 1}
+                <button type="button" class="ctl" onclick={() => move(-1)} aria-label="Previous project"><Icon name="left" size={14} /></button>
+                <button type="button" class="ctl" onclick={() => move(1)} aria-label="Next project"><Icon name="right" size={14} /></button>
               {/if}
             </div>
           </div>
         {/key}
-
-        {#if projects.length > 1 && variant !== 'C'}
-          <div class="switcher">
-            <span class="dim counter">{pad(heroIndex + 1)} / {pad(projects.length)}</span>
-            <button type="button" class="sbtn sbtn-icon glassy" onclick={() => move(-1)} aria-label="Previous featured project">
-              <Icon name="left" size={16} />
-            </button>
-            <button type="button" class="sbtn sbtn-icon glassy" onclick={() => move(1)} aria-label="Next featured project">
-              <Icon name="right" size={16} />
-            </button>
-          </div>
-        {/if}
       </div>
     </section>
 
-    <div class="studio-column rows" class:rows-b={variant === 'B'} class:rows-c={variant === 'C'}>
+    <div class="studio-column rows">
       {#if latest.length && variant === 'A'}
         <section aria-labelledby="latest-title">
           <div class="row-head">
@@ -246,7 +239,7 @@
           </div>
           <a class="sbtn" href={hrefWithVariant('/comparisons', page.url.searchParams)}>All projects <Icon name="up-right" /></a>
         </div>
-        <div class="grid-posters" class:poster-strip={variant === 'B' || variant === 'C'}>
+        <div class="grid-posters" class:poster-strip={variant === 'C'}>
           {#each projects as project, i (project.runId)}
             <ProjectCard
               title={project.title}
@@ -269,126 +262,6 @@
 <style>
   .home {
     padding-bottom: clamp(48px, 6vw, 88px);
-  }
-
-  .take-pills {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-    margin-top: 12px;
-  }
-
-  .take-pill {
-    height: 26px;
-    padding: 0 10px;
-    border-radius: 999px;
-    border: 1px solid #333;
-    background: #121212;
-    color: var(--dc-text-muted);
-    font-size: 12px;
-    font-weight: 600;
-    text-decoration: none;
-    display: inline-flex;
-    align-items: center;
-  }
-
-  .take-pill.active {
-    border-color: #666;
-    background: #2a2a2a;
-    color: var(--dc-text);
-  }
-
-  .hero-b {
-    display: grid;
-    gap: 16px;
-  }
-
-  @media (min-width: 900px) {
-    .hero-b {
-      grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.85fr);
-      align-items: stretch;
-    }
-
-    .hero-b .screen {
-      max-height: none;
-      min-height: min(56vh, 640px);
-    }
-
-    .hero-b .hero-overlay {
-      position: static;
-      margin-top: 0;
-      justify-content: center;
-    }
-
-    .hero-b .title-card {
-      width: 100%;
-    }
-  }
-
-  .hero-c {
-    position: relative;
-  }
-
-  .hero-c .screen {
-    max-height: min(88vh, 900px);
-  }
-
-  .hero-c .screen-scrim {
-    background:
-      linear-gradient(to top, #000 0%, rgba(0, 0, 0, 0.15) 40%, rgba(0, 0, 0, 0) 70%),
-      linear-gradient(to bottom, rgba(0, 0, 0, 0.35) 0%, rgba(0, 0, 0, 0) 22%);
-  }
-
-  .overlay-c {
-    position: absolute;
-    inset: auto 0 0 0;
-    padding: 0 clamp(16px, 4vw, 32px) clamp(20px, 4vw, 40px);
-    pointer-events: none;
-  }
-
-  .overlay-c .title-card,
-  .overlay-c .actions {
-    pointer-events: auto;
-  }
-
-  .editorial-card {
-    max-width: 720px;
-    padding: 0;
-    background: transparent;
-  }
-
-  .editorial-kicker {
-    margin: 0 0 8px;
-    color: rgba(255, 255, 255, 0.75);
-    font-size: 13px;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-  }
-
-  .editorial-title {
-    font-size: clamp(2rem, 5vw, 3.25rem);
-    line-height: 1.05;
-    text-shadow: 0 2px 24px rgba(0, 0, 0, 0.8);
-  }
-
-  .editorial-logline {
-    max-width: 42ch;
-    color: rgba(255, 255, 255, 0.72);
-    text-shadow: 0 1px 12px rgba(0, 0, 0, 0.85);
-  }
-
-  .actions-c {
-    margin-top: 20px;
-  }
-
-  .editorial-cta {
-    padding-inline: 18px;
-    font-size: 15px;
-  }
-
-  .rows-b,
-  .rows-c {
-    margin-top: 20px;
   }
 
   .poster-strip {
@@ -460,104 +333,244 @@
     font-size: 14px;
   }
 
-  .screen-scrim {
+  .scrim {
     position: absolute;
     inset: 0;
     pointer-events: none;
-    background:
-      linear-gradient(to top, #000 0%, rgba(0, 0, 0, 0) 30%),
-      linear-gradient(to bottom, rgba(0, 0, 0, 0.2) 0%, rgba(0, 0, 0, 0) 18%);
   }
 
-  .hero-overlay {
-    position: relative;
+  .scrim-a {
+    background: linear-gradient(to top, rgba(0, 0, 0, 0.92) 0%, rgba(0, 0, 0, 0.45) 22%, rgba(0, 0, 0, 0) 48%);
+  }
+
+  .scrim-b {
+    background:
+      linear-gradient(to top, rgba(0, 0, 0, 0.88) 0%, rgba(0, 0, 0, 0.2) 35%, transparent 62%),
+      linear-gradient(to right, rgba(0, 0, 0, 0.75) 0%, transparent 55%);
+  }
+
+  .scrim-c {
+    background:
+      radial-gradient(ellipse 90% 70% at 50% 100%, rgba(0, 0, 0, 0.85) 0%, transparent 70%),
+      linear-gradient(to top, rgba(0, 0, 0, 0.5) 0%, transparent 40%);
+  }
+
+  .overlay {
+    position: absolute;
+    inset: 0;
     display: flex;
     flex-direction: column;
-    gap: 12px;
-    margin-top: -24px;
+    justify-content: flex-end;
+    padding: clamp(16px, 3vw, 28px);
+    pointer-events: none;
   }
 
-  .title-card {
-    min-width: 0;
-    padding: 18px;
+  .overlay > * {
+    pointer-events: auto;
   }
 
-  .tags {
+  .mono {
+    font-family: var(--dc-font-mono);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    font-size: 10px;
+  }
+
+  .sans {
+    font-family: var(--dc-font-sans);
+  }
+
+  .script {
+    font-family: var(--dc-font-script);
+    font-style: italic;
+    letter-spacing: 0.02em;
+  }
+
+  .hero-meta {
+    margin: 0 0 6px;
+    color: rgba(255, 255, 255, 0.65);
+  }
+
+  .hero-title {
+    margin: 0;
+    color: #fff;
+    line-height: 1.08;
+    text-shadow: 0 2px 20px rgba(0, 0, 0, 0.65);
+  }
+
+  .overlay-a .hero-title {
+    font-family: var(--dc-font-serif);
+    font-size: clamp(1.6rem, 3.2vw, 2.35rem);
+    font-weight: 400;
+  }
+
+  .overlay-a .band {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    align-items: end;
+    gap: clamp(12px, 2vw, 24px);
+    width: 100%;
+    padding-top: 12px;
+    border-top: 1px solid rgba(255, 255, 255, 0.14);
+  }
+
+  .overlay-b .stack {
+    max-width: min(420px, 92%);
+    display: grid;
+    gap: 8px;
+    padding: 14px 16px;
+    border-radius: 8px;
+    background: rgba(8, 8, 8, 0.55);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    backdrop-filter: blur(8px);
+  }
+
+  .overlay-b .hero-title {
+    font-family: var(--dc-font-sans);
+    font-size: clamp(1.35rem, 2.4vw, 1.85rem);
+    font-weight: 600;
+    letter-spacing: -0.03em;
+  }
+
+  .overlay-b .hero-kicker {
+    margin: 0;
+    color: rgba(255, 255, 255, 0.55);
+  }
+
+  .overlay-b .hero-sub {
+    margin: 0;
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.78);
+  }
+
+  .overlay-b .hero-logline {
+    margin: 0;
+    font-size: 13px;
+    line-height: 1.45;
+    color: rgba(255, 255, 255, 0.62);
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .overlay-c {
+    align-items: center;
+    text-align: center;
+    padding-bottom: clamp(28px, 5vw, 56px);
+  }
+
+  .overlay-c .poster-title {
+    font-family: var(--dc-font-serif);
+    font-size: clamp(2.2rem, 6.5vw, 4.25rem);
+    max-width: 16ch;
+  }
+
+  .overlay-c .hero-kicker.serif-lite {
+    margin: 0 0 4px;
+    font-family: var(--dc-font-serif);
+    font-size: 14px;
+    font-style: italic;
+    color: rgba(255, 255, 255, 0.72);
+    text-transform: none;
+    letter-spacing: 0;
+  }
+
+  .overlay-c .hero-logline {
+    margin: 10px 0 0;
+    max-width: 36ch;
+    font-size: 15px;
+    color: rgba(255, 255, 255, 0.78);
+  }
+
+  .overlay-c .poster-cta {
+    margin-top: 14px;
+    font-size: 15px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+
+  .take-rail {
     display: flex;
     flex-wrap: wrap;
     gap: 6px;
-    height: 20px;
-    margin-bottom: 10px;
-    overflow: hidden;
-  }
-
-  .tags .stag {
-    max-width: 100%;
-  }
-
-  .logline {
-    display: -webkit-box;
-    height: calc(2 * 1.5em);
-    margin: 8px 0 0;
-    overflow: hidden;
-    color: var(--dc-text-muted);
-    font-size: 14px;
-    line-height: 1.5;
-    line-clamp: 2;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 2;
-  }
-
-  .actions {
-    display: flex;
-    flex-wrap: wrap;
     align-items: center;
-    gap: 8px;
-    margin-top: 16px;
   }
 
-  .switcher {
+  .take-chip {
+    padding: 4px 8px;
+    border-radius: 4px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    color: rgba(255, 255, 255, 0.7);
+    text-decoration: none;
+    font-size: 11px;
+  }
+
+  .take-chip.block {
+    border-radius: 2px;
+  }
+
+  .take-chip.active {
+    border-color: rgba(255, 255, 255, 0.55);
+    color: #fff;
+    background: rgba(255, 255, 255, 0.08);
+  }
+
+  .band-actions {
     display: flex;
-    align-items: center;
-    gap: 8px;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 6px;
+    white-space: nowrap;
   }
 
-  .counter {
-    margin-right: 4px;
+  .hero-textlink {
+    color: #fff;
     font-size: 13px;
-    font-variant-numeric: tabular-nums;
+    font-weight: 500;
+    text-decoration: none;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.35);
+    padding-bottom: 1px;
   }
 
-  .glassy {
-    background: rgba(22, 22, 22, 0.6);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
+  .hero-textlink.muted-link {
+    color: rgba(255, 255, 255, 0.55);
+    border-color: rgba(255, 255, 255, 0.2);
+    font-size: 12px;
   }
 
-  /* Wide enough to be a screen: the glass card sits over the picture. */
-  @container (min-width: 760px) {
-    .screen-scrim {
-      background:
-        linear-gradient(to top, #000 0%, rgba(0, 0, 0, 0.3) 26%, rgba(0, 0, 0, 0) 50%),
-        linear-gradient(to right, rgba(0, 0, 0, 0.55) 0%, rgba(0, 0, 0, 0) 50%),
-        linear-gradient(to bottom, rgba(0, 0, 0, 0.2) 0%, rgba(0, 0, 0, 0) 16%);
+  .media-controls {
+    position: absolute;
+    top: clamp(52px, 8vw, 72px);
+    right: clamp(16px, 3vw, 28px);
+    display: flex;
+    gap: 6px;
+    pointer-events: auto;
+  }
+
+  .ctl {
+    width: 32px;
+    height: 32px;
+    display: grid;
+    place-items: center;
+    border: 0;
+    border-radius: 6px;
+    background: rgba(0, 0, 0, 0.45);
+    color: #fff;
+    cursor: pointer;
+    backdrop-filter: blur(6px);
+  }
+
+  @media (max-width: 720px) {
+    .overlay-a .band {
+      grid-template-columns: 1fr;
+      gap: 10px;
     }
 
-    .hero-overlay {
-      position: absolute;
-      right: 0;
-      bottom: clamp(24px, 4cqi, 56px);
-      left: 0;
+    .band-actions {
       flex-direction: row;
-      align-items: flex-end;
-      justify-content: space-between;
-      margin-top: 0;
-    }
-
-    .title-card {
-      width: min(560px, 60%);
-      padding: 22px 24px;
-      background: rgba(22, 22, 22, 0.55);
+      align-items: center;
     }
   }
 
@@ -567,7 +580,7 @@
     display: grid;
     grid-template-columns: minmax(0, 1fr);
     gap: clamp(40px, 5vw, 64px);
-    margin-top: clamp(32px, 4vw, 48px);
+    margin-top: clamp(20px, 3vw, 32px);
   }
 
   .row-head {

@@ -2,19 +2,19 @@ export type PrototypeVariant = 'A' | 'B' | 'C';
 
 export const VARIANT_BLURBS: Record<PrototypeVariant, { title: string; home: string; projects: string }> = {
   A: {
-    title: 'Dense',
-    home: 'Glass hero card, take pills, Latest + Projects grids',
-    projects: 'Player + side rail + drawer below',
+    title: 'Lower third',
+    home: 'Full-bleed video · serif title · mono take rail · no glass card',
+    projects: 'Player + thumb rail · classic drawer',
   },
   B: {
-    title: 'Compact',
-    home: 'Split hero: video beside copy; no Latest row',
-    projects: 'Take dropdown, no rail, drawer first',
+    title: 'Studio left',
+    home: 'Full-bleed video · sans stack bottom-left · mono chips',
+    projects: 'Player + filmstrip takes · quiet header',
   },
   C: {
-    title: 'Editorial',
-    home: 'Title on picture, one Watch CTA, posters only',
-    projects: 'Wide player, quiet header, drawer tabs as chips',
+    title: 'Poster',
+    home: 'Full-bleed video · oversized serif · script logline · center',
+    projects: 'Wide player · pill tabs · no writer chrome',
   },
 };
 

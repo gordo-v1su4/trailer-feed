@@ -76,12 +76,6 @@
     void goto(`?${params}`, { replaceState: true, noScroll: true, keepFocus: true });
   }
 
-  function onTakeSelect(event: Event) {
-    const id = (event.currentTarget as HTMLSelectElement).value;
-    const next = takes.find((t) => t.id === id);
-    if (next) selectTake(next);
-  }
-
   function selectProject(runId: string) {
     if (runId === project?.runId) return;
     compareId = null;
@@ -320,28 +314,29 @@
       {/if}
     </header>
 
-    {#if take && variant === 'B' && takes.length > 1}
-      <label class="take-select">
-        <span class="take-select-label">Active take</span>
-        <select class="take-select-input" value={take.id} onchange={onTakeSelect}>
-          {#each takes as t (t.id)}
-            <option value={t.id}>{t.code}{t.model ? ` · ${t.model}` : ''}</option>
-          {/each}
-        </select>
-      </label>
-    {/if}
-
     {#if take}
-      <section class="review" aria-label="Takes" class:review-b={variant === 'B'} class:review-c={variant === 'C'}>
-        <TakePlayer
-          primary={take}
-          secondary={compareTake}
-          bind:mode
-          canStep={takes.length > 1}
-          onprev={() => step(-1)}
-          onnext={() => step(1)}
-        />
-        <div class="rail" aria-label="All takes" class:hidden={variant === 'B' || variant === 'C'}>
+      <section class="review" aria-label="Takes" data-layout={variant.toLowerCase()}>
+        <div class="player-stack">
+          <TakePlayer
+            primary={take}
+            secondary={compareTake}
+            bind:mode
+            canStep={takes.length > 1}
+            onprev={() => step(-1)}
+            onnext={() => step(1)}
+          />
+          {#if variant === 'B' && takes.length > 1}
+            <div class="take-filmstrip" aria-label="Takes">
+              {#each takes as t (t.id)}
+                <button type="button" class="strip-chip" class:active={t.id === take.id} onclick={() => selectTake(t)}>
+                  <span class="strip-code">{t.code}</span>
+                  {#if t.model}<span class="strip-model"><LegacyText text={t.model} /></span>{/if}
+                </button>
+              {/each}
+            </div>
+          {/if}
+        </div>
+        <div class="rail" aria-label="All takes" class:hidden={variant !== 'A'}>
           {#each takes.toReversed() as t (t.id)}
             <div class="rail-item">
               <ClipCard
@@ -793,41 +788,59 @@
     margin: 0;
   }
 
-  .review-b,
-  .review-c {
+  .review[data-layout='b'],
+  .review[data-layout='c'] {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .review-c :global(.take-player-wrap) {
-    max-width: none;
+  .player-stack {
+    min-width: 0;
+  }
+
+  .take-filmstrip {
+    display: flex;
+    gap: 8px;
+    margin-top: 10px;
+    overflow-x: auto;
+    padding-bottom: 4px;
+    scrollbar-width: thin;
+  }
+
+  .strip-chip {
+    flex: 0 0 auto;
+    display: grid;
+    gap: 2px;
+    min-width: 88px;
+    padding: 8px 10px;
+    border: 1px solid #2a2a2a;
+    border-radius: 6px;
+    background: #101010;
+    color: var(--dc-text);
+    text-align: left;
+    cursor: pointer;
+    font-family: var(--dc-font-mono);
+  }
+
+  .strip-chip.active {
+    border-color: #666;
+    background: #1c1c1c;
+  }
+
+  .strip-code {
+    font-size: 12px;
+    font-weight: 600;
+  }
+
+  .strip-model {
+    font-family: var(--dc-font-sans);
+    font-size: 10px;
+    color: var(--dc-text-muted);
+    text-transform: none;
+    letter-spacing: 0;
   }
 
   .rail.hidden {
     display: none;
-  }
-
-  .take-select {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    margin-bottom: 8px;
-    font-size: 13px;
-  }
-
-  .take-select-label {
-    color: var(--dc-text-muted);
-  }
-
-  .take-select-input {
-    flex: 1;
-    max-width: 320px;
-    height: 32px;
-    padding: 0 10px;
-    border-radius: 6px;
-    border: 1px solid #333;
-    background: #101010;
-    color: var(--dc-text);
-    font: 13px var(--dc-font-sans);
   }
 
   .head-c .t-page {
